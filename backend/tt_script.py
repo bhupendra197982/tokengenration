@@ -30,7 +30,7 @@ import requests
 
 EMAIL = os.environ.get("TRADETRON_EMAIL", "trailblazerbhupendra@gmail.com")
 PASSWORD = os.environ.get("TRADETRON_PASSWORD", "Verma@1234")
-BROKER_ID = os.environ.get("TRADETRON_BROKER_ID", "387")
+BROKER_ID = os.environ.get("TRADETRON_BROKER_ID", "917")
 # ============================================================
 
 import hashlib
