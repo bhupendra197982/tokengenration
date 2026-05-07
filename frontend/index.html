@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kotak Neo - Trading Panel</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <section class="section">
+        <div class="container">
+            <!-- Header -->
+            <div class="box has-background-dark">
+                <h1 class="title has-text-white has-text-centered">
+                    <span class="has-text-success">KOTAK</span> 
+                    <span class="has-text-warning">NEO</span>
+                </h1>
+                <p class="subtitle has-text-grey-light has-text-centered is-6">
+                    Quick Order Panel
+                </p>
+            </div>
+
+            <!-- Trading Panel -->
+            <div class="box trading-panel">
+                <!-- Symbol Search -->
+                <div class="field">
+                    <label class="label">Symbol</label>
+                    <div class="control has-icons-left">
+                        <input 
+                            class="input is-medium" 
+                            type="text" 
+                            id="symbolInput" 
+                            placeholder="Type symbol (e.g., RELIANCE, INFY)"
+                            autocomplete="off"
+                        >
+                        <span class="icon is-small is-left">
+                            <i class="fas fa-search"></i>
+                        </span>
+                    </div>
+                    <!-- Autocomplete Dropdown with solid background -->
+                    <div class="dropdown is-hidden" id="symbolDropdown">
+                        <div class="dropdown-menu" id="symbolList" role="menu">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+                    <input type="hidden" id="selectedToken">
+                    <input type="hidden" id="selectedSymbol">
+                </div>
+
+                <!-- Quantity -->
+                <div class="field">
+                    <label class="label">Quantity</label>
+                    <div class="control">
+                        <input 
+                            class="input is-medium" 
+                            type="number" 
+                            id="quantityInput" 
+                            placeholder="Enter quantity"
+                            min="1"
+                            value="1"
+                        >
+                    </div>
+                </div>
+
+                <!-- Order Type Radio -->
+                <div class="field">
+                    <label class="label">Order Type</label>
+                    <div class="control">
+                        <div class="buttons has-addons">
+                            <button class="button order-type-btn is-selected is-info" data-type="MARKET">
+                                MARKET
+                            </button>
+                            <button class="button order-type-btn" data-type="LIMIT">
+                                LIMIT
+                            </button>
+                            <button class="button order-type-btn" data-type="SL">
+                                SL
+                            </button>
+                            <button class="button order-type-btn" data-type="SL-M">
+                                SL-M
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Price Fields (Hidden for Market) -->
+                <div id="priceFields" class="is-hidden">
+                    <div class="field">
+                        <label class="label">Price (₹)</label>
+                        <div class="control">
+                            <input 
+                                class="input is-medium" 
+                                type="number" 
+                                id="priceInput" 
+                                placeholder="Enter price"
+                                step="0.05"
+                            >
+                        </div>
+                    </div>
+
+                    <div class="field" id="triggerPriceField">
+                        <label class="label">Trigger Price (₹)</label>
+                        <div class="control">
+                            <input 
+                                class="input is-medium" 
+                                type="number" 
+                                id="triggerPriceInput" 
+                                placeholder="Enter trigger price"
+                                step="0.05"
+                            >
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Product Type -->
+                <div class="field">
+                    <label class="label">Product Type</label>
+                    <div class="control">
+                        <div class="buttons has-addons">
+                            <button class="button product-type-btn is-selected is-warning" data-type="INTRADAY">
+                                INTRADAY (MIS)
+                            </button>
+                            <button class="button product-type-btn" data-type="NORMAL">
+                                NORMAL (NRML)
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Selected Symbol Display -->
+                <div class="notification is-light is-hidden" id="symbolDisplay">
+                    <strong>Selected:</strong> <span id="displaySymbol"></span> 
+                    <span class="tag is-info" id="displayExchange"></span>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="field is-grouped is-grouped-centered mt-5">
+                    <div class="control">
+                        <button class="button is-large is-success is-fullwidth buy-btn" id="buyBtn">
+                            <span class="icon">
+                                <i class="fas fa-arrow-up"></i>
+                            </span>
+                            <span>BUY</span>
+                        </button>
+                    </div>
+                    <div class="control">
+                        <button class="button is-large is-danger is-fullwidth sell-btn" id="sellBtn">
+                            <span class="icon">
+                                <i class="fas fa-arrow-down"></i>
+                            </span>
+                            <span>SELL</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Status Message -->
+                <div id="statusMessage" class="notification is-hidden mt-4"></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="app.js"></script>
+</body>
+</html>

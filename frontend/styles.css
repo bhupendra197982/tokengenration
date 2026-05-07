@@ -1,0 +1,165 @@
+:root {
+    --buy-color: #00d1b2;
+    --sell-color: #ff3860;
+    --bg-dark: #1a1a1a;
+}
+
+body {
+    background-color: #f5f5f5;
+    min-height: 100vh;
+}
+
+.trading-panel {
+    max-width: 500px;
+    margin: 0 auto;
+    border-radius: 12px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+    position: relative; /* Important for dropdown positioning */
+}
+
+/* Custom Button Styles */
+.buy-btn {
+    background: linear-gradient(135deg, #00b894 0%, #00d1b2 100%);
+    border: none;
+    font-weight: bold;
+    letter-spacing: 1px;
+    transition: all 0.3s ease;
+    min-width: 180px;
+}
+
+.buy-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(0, 209, 178, 0.4);
+}
+
+.sell-btn {
+    background: linear-gradient(135deg, #d63031 0%, #ff3860 100%);
+    border: none;
+    font-weight: bold;
+    letter-spacing: 1px;
+    transition: all 0.3s ease;
+    min-width: 180px;
+}
+
+.sell-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(255, 56, 96, 0.4);
+}
+
+/* Order Type Buttons */
+.order-type-btn, .product-type-btn {
+    flex: 1;
+    transition: all 0.2s;
+}
+
+.order-type-btn.is-selected, .product-type-btn.is-selected {
+    font-weight: bold;
+}
+
+/* Symbol Dropdown - SOLID BACKGROUND FIX */
+.dropdown {
+    position: relative;
+    display: block;
+}
+
+.dropdown.is-active {
+    display: block;
+}
+
+.dropdown-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 1000; /* High z-index to stay on top */
+    width: 100%;
+    max-height: 300px;
+    overflow-y: auto;
+    background-color: #ffffff !important; /* Solid white background */
+    border: 1px solid #dbdbdb;
+    border-radius: 6px;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.15);
+    display: none; /* Hidden by default */
+}
+
+.dropdown.is-active .dropdown-menu {
+    display: block; /* Show when active */
+}
+
+.dropdown-content {
+    background-color: #ffffff !important; /* Ensure solid background */
+    padding: 0;
+}
+
+.dropdown-item {
+    cursor: pointer;
+    padding: 12px;
+    border-bottom: 1px solid #f0f0f0;
+    background-color: #ffffff !important; /* Solid background per item */
+    transition: background 0.2s;
+}
+
+.dropdown-item:hover {
+    background-color: #f5f5f5 !important; /* Light gray on hover */
+}
+
+.dropdown-item:last-child {
+    border-bottom: none;
+}
+
+.dropdown-item .symbol-name {
+    font-weight: bold;
+    color: #363636;
+}
+
+.dropdown-item .company-name {
+    font-size: 0.85rem;
+    color: #7a7a7a;
+}
+
+.dropdown-item .exchange-tag {
+    font-size: 0.75rem;
+    margin-top: 4px;
+}
+
+/* Loading Spinner */
+.button.is-loading {
+    pointer-events: none;
+    opacity: 0.7;
+}
+
+/* Status Messages */
+.notification {
+    animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Input Focus States */
+.input:focus {
+    border-color: #485fc7;
+    box-shadow: 0 0 0 0.125em rgba(72, 95, 199, 0.25);
+}
+
+/* Mobile Responsive */
+@media (max-width: 768px) {
+    .trading-panel {
+        margin: 0 10px;
+    }
+    
+    .buy-btn, .sell-btn {
+        min-width: 140px;
+    }
+    
+    .dropdown-menu {
+        max-height: 250px; /* Slightly smaller on mobile */
+    }
+}
