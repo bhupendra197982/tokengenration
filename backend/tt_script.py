@@ -28,7 +28,7 @@ import requests
 # you would get it on this link 
 # user/broker-and-exchanges/regenerate-token/{BROKER_ID}
 
-EMAIL = os.environ.get("TRADETRON_EMAIL", "trailblazerbhupendra@gmail.com")
+EMAIL = os.environ.get("TRADETRON_EMAIL", "bhupandraverma@gmail.com")
 PASSWORD = os.environ.get("TRADETRON_PASSWORD", "Verma@1234")
 BROKER_ID = os.environ.get("TRADETRON_BROKER_ID", "917")
 # ============================================================
