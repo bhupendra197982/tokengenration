@@ -300,6 +300,7 @@ def main():
     print()
 
     session = requests.Session() 
+
     
     # Don't auto-redirect on the regenerate call so we can inspect it 
     # But DO auto-redirect for login
