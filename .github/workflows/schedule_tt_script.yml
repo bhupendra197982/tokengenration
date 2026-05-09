@@ -17,20 +17,17 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
-          cache-dependency-path: 'backend/requirements.txt'
 
-      - name: Install dependencies
-        working-directory: backend
-        run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
-          pip list
-
-      - name: Run tt_script.py
-        working-directory: backend
+      - name: Install requests and run script (v2)
         env:
           TRADETRON_EMAIL: ${{ secrets.TRADETRON_EMAIL }}
           TRADETRON_PASSWORD: ${{ secrets.TRADETRON_PASSWORD }}
           TRADETRON_BROKER_ID: ${{ secrets.TRADETRON_BROKER_ID }}
-        run: python tt_script.py
+        run: |
+          echo "=== Installing dependencies ==="
+          python -m pip install --upgrade pip
+          python -m pip install requests
+          echo "=== Verifying installation ==="
+          python -c "import requests; print('requests version:', requests.__version__)"
+          echo "=== Running tt_script.py ==="
+          python backend/tt_script.py
