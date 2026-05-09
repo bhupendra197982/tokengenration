@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: '0 3 * * 1-5'  # 8:30 AM IST (03:00 UTC), Monday to Friday
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/schedule_tt_script.yml'
+      - 'backend/tt_script.py'
+      - 'backend/requirements.txt'
 
 jobs:
   run-tt-script:
