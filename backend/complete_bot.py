@@ -32,7 +32,41 @@ import getpass
 # CONFIGURATION
 # ============================================================
 
-# Tradetron credentials
+# ============================================================
+# MULTI-USER CREDENTIALS
+# ============================================================
+# Add credentials for multiple users here
+# Format: {"email": "user@example.com", "password": "password", "broker_id": "917"}
+# 
+# EXAMPLE - UNCOMMENT AND MODIFY TO ADD MORE USERS:
+# USERS = [
+#     {
+#         "email": "user1@example.com",
+#         "password": "user1_password",
+#         "broker_id": "917"
+#     },
+#     {
+#         "email": "user2@example.com",
+#         "password": "user2_password",
+#         "broker_id": "917"
+#     },
+#     {
+#         "email": "user3@example.com",
+#         "password": "user3_password",
+#         "broker_id": "917"
+#     }
+# ]
+
+# Default single user (used if USERS list not configured)
+USERS = [
+    {
+        "email": os.environ.get("TRADETRON_EMAIL", "bhupandraverma@gmail.com"),
+        "password": os.environ.get("TRADETRON_PASSWORD", "Verma@1234"),
+        "broker_id": os.environ.get("TRADETRON_BROKER_ID", "917")
+    }
+]
+
+# Backward compatibility - single user environment variables
 EMAIL = os.environ.get("TRADETRON_EMAIL", "bhupandraverma@gmail.com")
 PASSWORD = os.environ.get("TRADETRON_PASSWORD", "Verma@1234")
 BROKER_ID = os.environ.get("TRADETRON_BROKER_ID", "917")
@@ -40,6 +74,40 @@ BROKER_ID = os.environ.get("TRADETRON_BROKER_ID", "917")
 # Telegram configuration
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8499389750:AAHexwQgpvy8UWBDNJkDRQsTcCkj6St-Mxc")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "6847391264")
+
+# ============================================================
+# MULTI-TELEGRAM BOT CONFIGURATION
+# ============================================================
+# Add multiple telegram bots/channels for notifications
+# Format: {"name": "Bot Name", "token": "BOT_TOKEN", "chat_id": "CHAT_ID"}
+#
+# EXAMPLE - UNCOMMENT AND MODIFY TO ADD MORE TELEGRAM BOTS:
+# TELEGRAM_BOTS = [
+#     {
+#         "name": "Main Bot",
+#         "token": "8499389750:AAHexwQgpvy8UWBDNJkDRQsTcCkj6St-Mxc",
+#         "chat_id": "6847391264"
+#     },
+#     {
+#         "name": "Backup Bot",
+#         "token": "YOUR_BACKUP_BOT_TOKEN",
+#         "chat_id": "YOUR_BACKUP_CHAT_ID"
+#     },
+#     {
+#         "name": "Team Channel",
+#         "token": "YOUR_TEAM_BOT_TOKEN",
+#         "chat_id": "YOUR_TEAM_CHAT_ID"
+#     }
+# ]
+
+# Default single telegram bot (used if TELEGRAM_BOTS list not configured)
+TELEGRAM_BOTS = [
+    {
+        "name": "Primary Bot",
+        "token": TELEGRAM_BOT_TOKEN,
+        "chat_id": TELEGRAM_CHAT_ID
+    }
+]
 
 # ============================================================
 # TRADETRON CONFIGURATION
@@ -68,26 +136,45 @@ HEADERS = {
 # ============================================================
 
 def send_telegram_message(message, prefix=""):
-    """Send a message to Telegram chat"""
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("⚠️  Telegram config missing - skipping notification")
+    """Send a message to all configured Telegram bots/channels"""
+    if not TELEGRAM_BOTS:
+        print("⚠️  No Telegram bots configured - skipping notification")
         return
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    sent_count = 0
+    failed_count = 0
 
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message
-    }
+    for bot in TELEGRAM_BOTS:
+        bot_token = bot.get("token")
+        chat_id = bot.get("chat_id")
+        bot_name = bot.get("name", "Unknown Bot")
 
-    try:
-        response = requests.post(url, json=payload, timeout=20)
-        if response.status_code == 200:
-            print(f"✓ Telegram notification sent: {message[:50]}...")
-        else:
-            print(f"⚠️  Telegram error: {response.status_code}")
-    except Exception as e:
-        print(f"⚠️  Telegram error: {e}")
+        if not bot_token or not chat_id:
+            print(f"⚠️  Telegram bot '{bot_name}' config missing - skipping")
+            failed_count += 1
+            continue
+
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+
+        payload = {
+            "chat_id": chat_id,
+            "text": message
+        }
+
+        try:
+            response = requests.post(url, json=payload, timeout=20)
+            if response.status_code == 200:
+                print(f"✓ Notification sent via '{bot_name}': {message[:40]}...")
+                sent_count += 1
+            else:
+                print(f"⚠️  Telegram error on '{bot_name}': {response.status_code}")
+                failed_count += 1
+        except Exception as e:
+            print(f"⚠️  Telegram error on '{bot_name}': {e}")
+            failed_count += 1
+
+    if sent_count > 0:
+        print(f"📤 Sent to {sent_count} bot(s), Failed: {failed_count}\n")
 
 def notify_start():
     """Notify that script has started"""
@@ -315,8 +402,8 @@ def regenerate_token(session):
 # ============================================================
 
 def main():
-    """Main function to execute token regeneration"""
-    global EMAIL, PASSWORD
+    """Main function to execute token regeneration for all users"""
+    global EMAIL, PASSWORD, BROKER_ID
 
     # Validate credentials - prompt interactively if not set
     if EMAIL == "YOUR_EMAIL_HERE":
@@ -331,21 +418,78 @@ def main():
             "body": "Missing credentials"
         }
 
-    print("=" * 60)
-    print(" Tradetron Broker Token Regenerator")
-    print(f" Broker ID: {BROKER_ID}")
-    print(f" Email: {EMAIL}")
-    print("=" * 60)
+    print("=" * 70)
+    print(" Tradetron Broker Token Regenerator - Multi-User Support")
+    print(f" Total users to process: {len(USERS)}")
+    print("=" * 70)
     print()
+
+    # Process each user
+    results = []
+    for idx, user in enumerate(USERS, 1):
+        user_email = user.get("email")
+        user_password = user.get("password")
+        user_broker_id = user.get("broker_id", BROKER_ID)
+
+        print(f"\n{'='*70}")
+        print(f" [{idx}/{len(USERS)}] Processing user: {user_email}")
+        print(f" Broker ID: {user_broker_id}")
+        print(f"{'='*70}\n")
+
+        result = process_user(user_email, user_password, user_broker_id)
+        results.append({
+            "email": user_email,
+            "status": result.get("statusCode"),
+            "message": result.get("body")
+        })
+
+    # Summary
+    print(f"\n{'='*70}")
+    print(" SUMMARY")
+    print(f"{'='*70}")
+    successful = sum(1 for r in results if r["status"] == 200)
+    failed = len(results) - successful
+
+    for result in results:
+        status_icon = "✅" if result["status"] == 200 else "❌"
+        print(f"{status_icon} {result['email']}: {result['message']}")
+
+    print(f"\nTotal: {successful} successful, {failed} failed")
+    print(f"{'='*70}\n")
+
+    # Send summary notification
+    summary_msg = f"🔄 Token Regeneration Summary:\n✅ Success: {successful}\n❌ Failed: {failed}"
+    send_telegram_message(summary_msg)
+
+    # Return overall status
+    return {
+        "statusCode": 200 if failed == 0 else 207,  # 207 = Multi-status
+        "body": f"Success: {successful}, Failed: {failed}",
+        "details": results
+    }
+
+def process_user(email, password, broker_id):
+    """Process token regeneration for a single user"""
+    global EMAIL, PASSWORD, BROKER_ID
+
+    # Set global variables for this user
+    EMAIL = email
+    PASSWORD = password
+    BROKER_ID = broker_id
+
+    # Update URLs with the broker ID
+    global REGENERATE_URL
+    REGENERATE_URL = f"{BASE_URL}/user/broker-and-exchanges/regenerate-token/{BROKER_ID}"
 
     session = requests.Session()
 
-    # Send start notification
-    notify_start()
+    # Send start notification for this user
+    send_telegram_message(f"🤖 Token Regeneration Started for {email}")
 
     try:
         if not login(session):
-            print("\nAborting due to login failure.")
+            print(f"\nAborting {email} due to login failure.")
+            notify_error(f"Login failed for {email}")
             return {
                 "statusCode": 401,
                 "body": "Login failed"
@@ -355,46 +499,46 @@ def main():
         time.sleep(1)
 
         if regenerate_token(session):
-            print("\n✓ Done! Token regeneration completed successfully.")
-            notify_success()
+            print(f"\n✓ Done! Token regeneration completed successfully for {email}.")
+            send_telegram_message(f"✅ Token Regeneration SUCCESSFUL for {email}")
             return {
                 "statusCode": 200,
                 "body": "Success"
             }
         else:
-            print("\n✗ Token regeneration may have failed. Check Tradetron UI.")
+            print(f"\n✗ Token regeneration may have failed for {email}. Check Tradetron UI.")
             return {
                 "statusCode": 500,
                 "body": "Token regeneration failed"
             }
 
     except requests.exceptions.ConnectionError as e:
-        print(f"\n✗ Connection error: {e}")
-        notify_error(f"Connection error: {str(e)}")
+        print(f"\n✗ Connection error for {email}: {e}")
+        notify_error(f"Connection error for {email}: {str(e)}")
         return {
             "statusCode": 500,
             "body": f"Connection error: {str(e)}"
         }
 
     except requests.exceptions.Timeout as e:
-        print(f"\n✗ Request timed out: {e}")
-        notify_error(f"Request timeout: {str(e)}")
+        print(f"\n✗ Request timed out for {email}: {e}")
+        notify_error(f"Request timeout for {email}: {str(e)}")
         return {
             "statusCode": 500,
             "body": f"Request timeout: {str(e)}"
         }
 
     except RuntimeError as e:
-        print(f"\n✗ Error: {e}")
-        notify_error(str(e))
+        print(f"\n✗ Error for {email}: {e}")
+        notify_error(f"Error for {email}: {str(e)}")
         return {
             "statusCode": 500,
             "body": str(e)
         }
 
     except Exception as e:
-        print(f"\n✗ Unexpected error: {type(e).__name__}: {e}")
-        notify_error(f"{type(e).__name__}: {str(e)}")
+        print(f"\n✗ Unexpected error for {email}: {type(e).__name__}: {e}")
+        notify_error(f"Error for {email}: {type(e).__name__}: {str(e)}")
         return {
             "statusCode": 500,
             "body": f"{type(e).__name__}: {str(e)}"
