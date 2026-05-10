@@ -52,9 +52,9 @@ IS_LAMBDA = os.environ.get('AWS_LAMBDA_FUNCTION_NAME') is not None
 # ============================================================
 IIFL_USERS = [
     {
-        "user_id": os.environ.get("IIFL_USER_ID", "YOUR_USER_ID"),
-        "password": os.environ.get("IIFL_PASSWORD", "YOUR_PASSWORD"),
-        "totp_secret": os.environ.get("IIFL_TOTP_SECRET", "YOUR_TOTP_SECRET")
+        "user_id": os.environ.get("IIFL_USER_ID", "67589274"),
+        "password": os.environ.get("IIFL_PASSWORD", "Verma@1234"),
+        "totp_secret": os.environ.get("IIFL_TOTP_SECRET", "CDIBDOJBJJAOGQBGUEEYTCKJCVRIQBHS")
     }
 ]
 
@@ -67,8 +67,8 @@ TRADETRON_IIFL_AUTH_URL = os.environ.get(
 # ============================================================
 # TELEGRAM CONFIGURATION
 # ============================================================
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8499389750:AAHexwQgpvy8UWBDNJkDRQsTcCkj6St-Mxc")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "6847391264")
 
 TELEGRAM_BOTS = [
     {
@@ -210,6 +210,7 @@ def login_iifl_via_tradetron(user_id, password, totp_secret):
         dict with success status, message, and last_updated timestamp
     """
     from selenium.webdriver.common.by import By
+    from selenium.webdriver.common.keys import Keys
     from selenium.webdriver.support.ui import WebDriverWait
     from selenium.webdriver.support import expected_conditions as EC
     from selenium.common.exceptions import TimeoutException, NoSuchElementException
@@ -229,13 +230,61 @@ def login_iifl_via_tradetron(user_id, password, totp_secret):
         wait = WebDriverWait(driver, 30)
         print("      ✓ Browser launched successfully")
 
+        def capture_debug_artifacts(tag):
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_tag = tag.replace(" ", "_")
+            screenshot_path = os.path.join(os.getcwd(), f"iifl_{safe_tag}_{timestamp}.png")
+            html_path = os.path.join(os.getcwd(), f"iifl_{safe_tag}_{timestamp}.html")
+            try:
+                driver.save_screenshot(screenshot_path)
+                print(f"      📸 Saved screenshot: {screenshot_path}")
+            except Exception as e:
+                print(f"      ⚠️  Failed to save screenshot: {e}")
+            try:
+                with open(html_path, "w", encoding="utf-8") as f:
+                    f.write(driver.page_source)
+                print(f"      🧾 Saved HTML: {html_path}")
+            except Exception as e:
+                print(f"      ⚠️  Failed to save HTML: {e}")
+
+        def find_visible_element(selectors, timeout=8):
+            for selector in selectors:
+                try:
+                    element = WebDriverWait(driver, timeout).until(
+                        EC.visibility_of_element_located((By.CSS_SELECTOR, selector))
+                    )
+                    if element.is_displayed():
+                        return element, selector
+                except Exception:
+                    continue
+            return None, None
+
+        def find_visible_element_in_frames(selectors, timeout=6):
+            element, selector = find_visible_element(selectors, timeout)
+            if element:
+                return element, selector, "default"
+
+            frames = driver.find_elements(By.TAG_NAME, "iframe")
+            for index, frame in enumerate(frames):
+                try:
+                    driver.switch_to.frame(frame)
+                    element, selector = find_visible_element(selectors, timeout)
+                    if element:
+                        return element, selector, f"iframe[{index}]"
+                except Exception:
+                    pass
+                finally:
+                    driver.switch_to.default_content()
+
+            return None, None, None
+
         # ============================================
         # STEP 1: Open Tradetron IIFL auth URL
         # ============================================
         print(f"\n[2/6] 📍 Opening Tradetron IIFL auth URL...")
         print(f"      URL: {TRADETRON_IIFL_AUTH_URL}")
         driver.get(TRADETRON_IIFL_AUTH_URL)
-        time.sleep(3)
+        wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
         
         current_url = driver.current_url
         print(f"      Current URL: {current_url}")
@@ -262,42 +311,46 @@ def login_iifl_via_tradetron(user_id, password, totp_secret):
             "input[placeholder*='Mobile']",
             "input[placeholder*='mobile']",
             "input[placeholder*='PAN']",
+            "input[aria-label*='Client']",
+            "input[aria-label*='User']",
+            "input[aria-label*='Email']",
+            "input[aria-label*='Mobile']",
+            "input[aria-label*='PAN']",
             "input[name='userId']",
             "input[name='clientId']",
             "input[name='client_id']",
             "input[name='email']",
+            "input[name*='user']",
+            "input[name*='client']",
+            "input[id*='user']",
+            "input[id*='client']",
+            "input[id*='email']",
             "input[id='userId']",
             "input[id='clientId']",
+            "input[autocomplete='username']",
             "input[type='text']",
         ]
         
-        user_id_field = None
-        for selector in user_id_selectors:
-            try:
-                user_id_field = wait.until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-                )
-                if user_id_field.is_displayed():
-                    print(f"      Found User ID field: {selector}")
-                    break
-            except:
-                continue
-        
+        user_id_field, user_id_selector, user_id_location = find_visible_element_in_frames(user_id_selectors)
         if not user_id_field:
             try:
                 user_id_field = driver.find_element(By.XPATH, 
                     "//input[contains(@placeholder, 'User') or contains(@placeholder, 'Client') or "
                     "contains(@placeholder, 'Email') or contains(@placeholder, 'Mobile') or "
                     "contains(@placeholder, 'PAN') or @type='text']")
+                user_id_selector = "xpath-fallback"
+                user_id_location = "default"
             except NoSuchElementException:
                 print("      ❌ Could not find User ID field")
+                capture_debug_artifacts("user_id_missing")
                 return {"success": False, "message": "User ID field not found", "last_updated": None}
+        
+        print(f"      Found User ID field: {user_id_selector} ({user_id_location})")
         
         # Enter User ID
         user_id_field.clear()
         user_id_field.send_keys(user_id)
         print(f"      ✓ Entered User ID: {user_id}")
-        time.sleep(0.5)
 
         # Find and enter Password
         password_selectors = [
@@ -307,25 +360,22 @@ def login_iifl_via_tradetron(user_id, password, totp_secret):
             "input[name='password']",
             "input[name='pwd']",
             "input[id='password']",
+            "input[name*='pass']",
+            "input[id*='pass']",
+            "input[autocomplete='current-password']",
         ]
         
-        password_field = None
-        for selector in password_selectors:
-            try:
-                password_field = driver.find_element(By.CSS_SELECTOR, selector)
-                if password_field.is_displayed():
-                    break
-            except:
-                continue
-        
+        password_field, password_selector, password_location = find_visible_element_in_frames(password_selectors)
         if not password_field:
             print("      ❌ Could not find Password field")
+            capture_debug_artifacts("password_missing")
             return {"success": False, "message": "Password field not found", "last_updated": None}
+        
+        print(f"      Found Password field: {password_selector} ({password_location})")
         
         password_field.clear()
         password_field.send_keys(password)
         print("      ✓ Entered Password")
-        time.sleep(0.5)
 
         # ============================================
         # STEP 3: Click Login Button
@@ -341,6 +391,8 @@ def login_iifl_via_tradetron(user_id, password, totp_secret):
             "button.submit-btn",
             "#loginBtn",
             ".login-btn",
+            "button[aria-label*='Login']",
+            "button[name*='login']",
         ]
         
         for selector in login_button_selectors:
@@ -382,17 +434,27 @@ def login_iifl_via_tradetron(user_id, password, totp_secret):
                 pass
         
         if not login_clicked:
-            print("      ⚠️  Could not find Login button - trying to continue anyway")
+            try:
+                password_field.send_keys(Keys.ENTER)
+                login_clicked = True
+                print("      ✓ Submitted login via Enter key")
+            except Exception:
+                print("      ⚠️  Could not find Login button - trying to continue anyway")
         
-        time.sleep(3)
-        send_telegram_message(f"🔑 IIFL Login submitted for {user_id}")
+        wait.until(
+            lambda d: "totp" in d.page_source.lower()
+            or "otp" in d.page_source.lower()
+            or "authenticator" in d.page_source.lower()
+            or "authorize" in d.page_source.lower()
+            or "token" in d.page_source.lower()
+        )
+        # Telegram message deferred until token generation result
 
         # ============================================
         # STEP 4: Handle TOTP Authentication
         # ============================================
         print(f"\n[5/6] 🔐 Handling TOTP authentication...")
         
-        time.sleep(2)
         current_url = driver.current_url
         page_source = driver.page_source.lower()
         
@@ -404,54 +466,65 @@ def login_iifl_via_tradetron(user_id, password, totp_secret):
             totp_code = generate_totp(totp_secret)
             print(f"      ✓ Generated TOTP: {totp_code}")
             
-            # Find TOTP input field
-            totp_selectors = [
-                "input[placeholder*='TOTP']",
-                "input[placeholder*='totp']",
-                "input[placeholder*='OTP']",
-                "input[placeholder*='otp']",
-                "input[placeholder*='Authenticator']",
-                "input[placeholder*='2FA']",
-                "input[name='totp']",
-                "input[name='otp']",
-                "input[name='twofa']",
-                "input[id='totp']",
-                "input[id='otp']",
-                "input[type='tel']",
-                "input[maxlength='6']",
-            ]
-            
+            # Find TOTP input field(s)
+            totp_entered = False
+            totp_inputs = driver.find_elements(By.CSS_SELECTOR, "input[maxlength='1'], input[autocomplete='one-time-code']")
             totp_field = None
-            for selector in totp_selectors:
-                try:
-                    totp_field = driver.find_element(By.CSS_SELECTOR, selector)
-                    if totp_field.is_displayed():
-                        print(f"      Found TOTP field: {selector}")
-                        break
-                except:
-                    continue
-            
-            # Fallback: find numeric input
-            if not totp_field:
-                try:
-                    inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text'], input[type='number'], input[type='tel']")
-                    for inp in inputs:
-                        if inp.is_displayed():
-                            placeholder = inp.get_attribute("placeholder") or ""
-                            maxlen = inp.get_attribute("maxlength") or ""
-                            if "otp" in placeholder.lower() or "totp" in placeholder.lower() or maxlen == "6":
-                                totp_field = inp
-                                print("      Found TOTP field (by attributes)")
-                                break
-                except:
-                    pass
-            
-            if totp_field:
-                totp_field.clear()
-                totp_field.send_keys(totp_code)
-                print("      ✓ Entered TOTP")
-                time.sleep(0.5)
+
+            if totp_inputs and len(totp_inputs) >= 6:
+                for idx, digit in enumerate(totp_code[:6]):
+                    totp_inputs[idx].clear()
+                    totp_inputs[idx].send_keys(digit)
+                totp_entered = True
+                print("      ✓ Entered TOTP into 6 boxes")
+            else:
+                totp_selectors = [
+                    "input[placeholder*='TOTP']",
+                    "input[placeholder*='totp']",
+                    "input[placeholder*='OTP']",
+                    "input[placeholder*='otp']",
+                    "input[placeholder*='Authenticator']",
+                    "input[placeholder*='2FA']",
+                    "input[name='totp']",
+                    "input[name='otp']",
+                    "input[name='twofa']",
+                    "input[id='totp']",
+                    "input[id='otp']",
+                    "input[type='tel']",
+                    "input[maxlength='6']",
+                ]
+                for selector in totp_selectors:
+                    try:
+                        totp_field = wait.until(
+                            EC.visibility_of_element_located((By.CSS_SELECTOR, selector))
+                        )
+                        if totp_field.is_displayed():
+                            print(f"      Found TOTP field: {selector}")
+                            break
+                    except:
+                        continue
                 
+                if not totp_field:
+                    try:
+                        inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text'], input[type='number'], input[type='tel']")
+                        for inp in inputs:
+                            if inp.is_displayed():
+                                placeholder = inp.get_attribute("placeholder") or ""
+                                maxlen = inp.get_attribute("maxlength") or ""
+                                if "otp" in placeholder.lower() or "totp" in placeholder.lower() or maxlen == "6":
+                                    totp_field = inp
+                                    print("      Found TOTP field (by attributes)")
+                                    break
+                    except:
+                        pass
+                
+                if totp_field:
+                    totp_field.clear()
+                    totp_field.send_keys(totp_code)
+                    totp_entered = True
+                    print("      ✓ Entered TOTP")
+
+            if totp_entered:
                 # Click Verify/Submit button
                 verify_clicked = False
                 verify_selectors = [
@@ -487,8 +560,12 @@ def login_iifl_via_tradetron(user_id, password, totp_secret):
                     except:
                         pass
                 
-                time.sleep(3)
-                send_telegram_message(f"🔐 IIFL TOTP submitted for {user_id}")
+                wait.until(
+                    lambda d: "authorize" in d.page_source.lower()
+                    or "token" in d.page_source.lower()
+                    or "success" in d.page_source.lower()
+                )
+                # Telegram message deferred until token generation result
             else:
                 print("      ⚠️  TOTP field not found - may not be required")
         else:
@@ -561,7 +638,7 @@ def login_iifl_via_tradetron(user_id, password, totp_secret):
                     pass
             
             time.sleep(3)
-            send_telegram_message(f"✅ IIFL Authorization completed for {user_id}")
+            # Telegram message deferred until token generation result
         else:
             print("      ℹ️  No explicit authorization page - may be auto-authorized")
 
@@ -680,9 +757,6 @@ def process_user(user):
         print("⚠️  TOTP secret not configured - skipping")
         return {"user_id": user_id, "status": 400, "message": "TOTP secret not set"}
 
-    # Send start notification
-    send_telegram_message(f"🚀 IIFL Token Generation Started\n👤 User: {user_id}\n⏰ Time: {get_current_timestamp()}")
-
     result = login_iifl_via_tradetron(user_id, password, totp_secret)
     
     if result.get("success"):
@@ -750,17 +824,7 @@ def main():
     print(f"\nTotal: {successful} successful, {failed} failed")
     print(f"{'='*70}\n")
 
-    # Send summary notification
-    summary_lines = [f"🔄 IIFL Token Generation Summary:"]
-    for result in results:
-        if result["status"] == 200:
-            timestamp_info = result.get('last_updated', 'N/A')
-            summary_lines.append(f"✅ {result['user_id']}: {timestamp_info}")
-        else:
-            summary_lines.append(f"❌ {result['user_id']}: {result.get('message', 'Failed')}")
-    
-    summary_msg = "\n".join(summary_lines)
-    send_telegram_message(summary_msg)
+    # Telegram summary notification suppressed; only final token result is sent per user
 
     return {
         "statusCode": 200 if failed == 0 else 207,
