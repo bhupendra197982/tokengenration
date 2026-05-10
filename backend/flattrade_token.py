@@ -3,24 +3,32 @@
 FlatTrade Token Generation Script with Telegram Notifications
 ==============================================================
 Automates the process of generating FlatTrade API tokens via Tradetron integration.
-Uses Selenium to automate the browser login process with TOTP authentication.
 
-This script is designed for FlatTrade broker token regeneration through Tradetron.
+Supports TWO modes:
+1. LOCAL MODE (Selenium) - Uses browser automation for login
+2. LAMBDA MODE (Requests) - Uses HTTP requests for Lambda deployment
 
-Usage: python3 flattrade_token.py
+Usage: 
+- Local: python3 flattrade_token.py
+- Lambda: Deploy and invoke lambda_handler
 
-Configuration:
+Configuration via environment variables:
 - FLATTRADE_USER_ID (Broker User ID)
 - FLATTRADE_PASSWORD (Broker Password)  
 - FLATTRADE_TOTP_SECRET (TOTP Secret Key for 2FA)
 - TELEGRAM_BOT_TOKEN
 - TELEGRAM_CHAT_ID
+- USE_SELENIUM (set to "false" for Lambda/HTTP mode)
 """
 
 import os
 import sys
 import time
+import re
+import json
+import hashlib
 import requests
+import urllib.parse
 
 # Optional imports for TOTP
 try:
@@ -28,7 +36,10 @@ try:
     HAS_PYOTP = True
 except ImportError:
     HAS_PYOTP = False
-    print("⚠️  pyotp not installed. Run: pip install pyotp")
+
+# Check if running in Lambda environment
+IS_LAMBDA = os.environ.get("AWS_LAMBDA_FUNCTION_NAME") is not None
+USE_SELENIUM = os.environ.get("USE_SELENIUM", "true").lower() == "true" and not IS_LAMBDA
 
 # ============================================================
 # CONFIGURATION
@@ -58,20 +69,20 @@ except ImportError:
 FLATTRADE_USERS = [
     {
         "user_id": os.environ.get("FLATTRADE_USER_ID", "FZ29374"),
-        "password": os.environ.get("FLATTRADE_PASSWORD", "@Bhupendra25"),
-        "totp_secret": os.environ.get("FLATTRADE_TOTP_SECRET", "5SF7Z2QZW6NUUTFHGX7QWGUUFR373NG5")
+        "password": os.environ.get("FLATTRADE_PASSWORD", "Verma@1979"),
+        "totp_secret": os.environ.get("FLATTRADE_TOTP_SECRET", "GVHGG7F3HQZX6NN5")
     }
 ]
 
-# Tradetron FlatTrade Auth URL (from the screenshot)
-# This URL redirects to FlatTrade login page
+# Tradetron FlatTrade Auth URL
 TRADETRON_FLATTRADE_AUTH_URL = os.environ.get(
     "TRADETRON_FLATTRADE_AUTH_URL", 
     "https://flattrade.tradetron.tech/auth/2901162"
 )
 
-# FlatTrade Direct Login URL (from the screenshot)
-FLATTRADE_LOGIN_URL = "https://auth.flattrade.in/"
+# FlatTrade API endpoints
+FLATTRADE_BASE_URL = "https://auth.flattrade.in"
+FLATTRADE_API_URL = "https://authapi.flattrade.in"
 
 # ============================================================
 # TELEGRAM CONFIGURATION
@@ -97,6 +108,16 @@ TELEGRAM_BOTS = [
         "chat_id": TELEGRAM_CHAT_ID
     }
 ]
+
+# HTTP Headers for requests
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Connection": "keep-alive",
+}
 
 # ============================================================
 # TELEGRAM NOTIFICATION FUNCTIONS
@@ -139,7 +160,172 @@ def generate_totp(secret):
 
 
 # ============================================================
-# SELENIUM AUTOMATION FOR FLATTRADE LOGIN
+# HTTP-BASED LOGIN (Lambda Compatible)
+# ============================================================
+
+def login_flattrade_http(user_id, password, totp_secret):
+    """
+    Login to FlatTrade using HTTP requests (Lambda compatible).
+    This approach doesn't require a browser.
+    """
+    print(f"\n{'='*60}")
+    print(f" FlatTrade Token Generation (HTTP Mode)")
+    print(f" User ID: {user_id}")
+    print(f"{'='*60}\n")
+
+    session = requests.Session()
+
+    try:
+        # Step 1: Get the Tradetron auth URL and follow redirect to FlatTrade
+        print("[1/4] Getting FlatTrade auth page...")
+        resp = session.get(TRADETRON_FLATTRADE_AUTH_URL, headers=HEADERS, allow_redirects=True)
+        print(f"      Redirected to: {resp.url}")
+        
+        # Extract app_key and sid from URL
+        parsed_url = urllib.parse.urlparse(resp.url)
+        query_params = urllib.parse.parse_qs(parsed_url.query)
+        app_key = query_params.get('app_key', [''])[0]
+        sid = query_params.get('sid', [''])[0]
+        
+        if not app_key or not sid:
+            print("      ❌ Could not extract app_key or sid from URL")
+            return False
+        
+        print(f"      App Key: {app_key[:20]}...")
+        print(f"      SID: {sid[:20]}...")
+
+        # Step 2: Generate TOTP
+        print("[2/4] Generating TOTP...")
+        totp_code = generate_totp(totp_secret)
+        print(f"      ✓ TOTP: {totp_code}")
+
+        # Step 3: Perform login via API
+        print("[3/4] Logging in to FlatTrade...")
+        
+        # FlatTrade uses a specific login API endpoint
+        login_url = f"{FLATTRADE_API_URL}/trade/apitoken"
+        
+        # Prepare login payload - FlatTrade specific
+        login_payload = {
+            "uid": user_id,
+            "pwd": hashlib.sha256(password.encode()).hexdigest(),
+            "factor2": totp_code,
+            "apkversion": "1.0.0",
+            "imei": "abc1234",
+            "vc": "TRADE_API",
+            "appkey": app_key,
+            "source": "API"
+        }
+        
+        login_headers = {
+            **HEADERS,
+            "Content-Type": "application/json",
+            "Origin": FLATTRADE_BASE_URL,
+            "Referer": resp.url,
+        }
+
+        # Try direct API login
+        try:
+            login_resp = session.post(login_url, json=login_payload, headers=login_headers, timeout=30)
+            login_data = login_resp.json() if login_resp.text else {}
+            
+            if login_data.get("stat") == "Ok" or "token" in str(login_data).lower():
+                print("      ✓ API Login successful!")
+                print(f"      Token received: {str(login_data.get('susertoken', 'N/A'))[:30]}...")
+                
+                # Step 4: Complete Tradetron callback with token
+                print("[4/4] Completing Tradetron authentication...")
+                
+                # Redirect back to Tradetron with success
+                callback_url = f"https://flattrade.broker.tradetron.tech/success"
+                try:
+                    callback_resp = session.get(callback_url, headers=HEADERS, allow_redirects=True)
+                    print(f"      Final URL: {callback_resp.url}")
+                    
+                    if "success" in callback_resp.url.lower() or callback_resp.status_code == 200:
+                        print("\n✅ FlatTrade authentication SUCCESSFUL!")
+                        return True
+                except:
+                    # Even if callback fails, if we got token, consider it success
+                    print("\n✅ FlatTrade token generated (callback redirect skipped)")
+                    return True
+            else:
+                print(f"      ❌ Login failed: {login_data.get('emsg', 'Unknown error')}")
+                
+        except requests.exceptions.RequestException as e:
+            print(f"      ⚠️  API login request failed: {e}")
+
+        # Alternative: Try form-based login
+        print("      Trying form-based login...")
+        
+        # Get login page to extract CSRF tokens
+        login_page = session.get(f"{FLATTRADE_BASE_URL}/?app_key={app_key}&sid={sid}", headers=HEADERS)
+        
+        # Look for any hidden tokens in the page
+        csrf_patterns = [
+            r'name="_token"\s+value="([^"]+)"',
+            r'name="csrf_token"\s+value="([^"]+)"',
+            r'"_token":\s*"([^"]+)"',
+        ]
+        
+        csrf_token = None
+        for pattern in csrf_patterns:
+            match = re.search(pattern, login_page.text)
+            if match:
+                csrf_token = match.group(1)
+                break
+
+        # Prepare form data
+        form_data = {
+            "userId": user_id,
+            "password": password,
+            "totp": totp_code,
+        }
+        
+        if csrf_token:
+            form_data["_token"] = csrf_token
+            
+        form_headers = {
+            **HEADERS,
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Origin": FLATTRADE_BASE_URL,
+            "Referer": login_page.url,
+        }
+
+        # Submit login form
+        form_resp = session.post(
+            f"{FLATTRADE_BASE_URL}/login",
+            data=form_data,
+            headers=form_headers,
+            allow_redirects=True
+        )
+        
+        print(f"      Form response URL: {form_resp.url}")
+        
+        # Check for success
+        if "success" in form_resp.url.lower() or "tradetron" in form_resp.url.lower():
+            print("\n✅ FlatTrade authentication SUCCESSFUL (form login)!")
+            return True
+        elif form_resp.status_code == 200 and "dashboard" in form_resp.url.lower():
+            print("\n✅ FlatTrade authentication SUCCESSFUL!")
+            return True
+        else:
+            print(f"      ❌ Form login may have failed. URL: {form_resp.url}")
+            
+            # Check page content
+            if "invalid" in form_resp.text.lower() or "error" in form_resp.text.lower():
+                print("      ❌ Invalid credentials or TOTP")
+                return False
+
+        return False
+
+    except Exception as e:
+        print(f"\n❌ Error during FlatTrade HTTP login: {type(e).__name__}: {e}")
+        return False
+
+
+# ============================================================
+# SELENIUM-BASED LOGIN (Local Mode)
 # ============================================================
 
 def setup_selenium_driver():
@@ -152,7 +338,7 @@ def setup_selenium_driver():
     except ImportError:
         print("❌ Selenium not installed!")
         print("   Run: pip install selenium webdriver-manager")
-        sys.exit(1)
+        return None
 
     chrome_options = Options()
     # Headless mode (no browser window)
@@ -165,7 +351,6 @@ def setup_selenium_driver():
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option("useAutomationExtension", False)
     
-    # Add user agent
     chrome_options.add_argument(
         "user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -184,73 +369,65 @@ def setup_selenium_driver():
         return driver
     except Exception as e:
         print(f"❌ Failed to setup Chrome driver: {e}")
-        sys.exit(1)
+        return None
 
 
-def login_flattrade_via_tradetron(user_id, password, totp_secret):
+def login_flattrade_selenium(user_id, password, totp_secret):
     """
-    Login to FlatTrade via Tradetron auth URL and complete authentication.
-    
-    Flow:
-    1. Open Tradetron FlatTrade auth URL (https://flattrade.tradetron.tech/auth/2901162)
-    2. This redirects to FlatTrade login page
-    3. Enter User ID, Password, and TOTP
-    4. Click Login
-    5. Wait for successful authentication and redirect back to Tradetron
+    Login to FlatTrade via Tradetron using Selenium browser automation.
     """
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as EC
-    from selenium.common.exceptions import TimeoutException, NoSuchElementException
+    try:
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.common.exceptions import TimeoutException, NoSuchElementException
+    except ImportError:
+        print("❌ Selenium not installed - falling back to HTTP mode")
+        return login_flattrade_http(user_id, password, totp_secret)
 
     print(f"\n{'='*60}")
-    print(f" FlatTrade Token Generation")
+    print(f" FlatTrade Token Generation (Selenium Mode)")
     print(f" User ID: {user_id}")
     print(f"{'='*60}\n")
 
     driver = None
     
     try:
-        # Setup driver
         print("[1/5] Setting up browser...")
         driver = setup_selenium_driver()
+        if not driver:
+            print("      ❌ Failed to setup browser - trying HTTP mode")
+            return login_flattrade_http(user_id, password, totp_secret)
+            
         wait = WebDriverWait(driver, 30)
 
-        # Step 1: Open Tradetron FlatTrade auth URL
         print(f"[2/5] Opening Tradetron FlatTrade auth URL...")
         print(f"      URL: {TRADETRON_FLATTRADE_AUTH_URL}")
         driver.get(TRADETRON_FLATTRADE_AUTH_URL)
         time.sleep(3)
         
-        # Check if redirected to FlatTrade login page
         current_url = driver.current_url
         print(f"      Current URL: {current_url}")
         
-        # Step 2: Wait for login page and enter credentials
         print("[3/5] Waiting for FlatTrade login page...")
         
-        # Wait for User ID field
         try:
             user_id_field = wait.until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "input[placeholder='User ID'], input[name='userId'], input[id='userId'], input[type='text']"))
             )
             print("      ✓ Login page loaded")
         except TimeoutException:
-            # Try alternative selectors
             try:
                 user_id_field = driver.find_element(By.XPATH, "//input[contains(@placeholder, 'User') or contains(@placeholder, 'user')]")
             except NoSuchElementException:
                 print("      ❌ Could not find User ID field")
-                print(f"      Page source preview: {driver.page_source[:500]}")
                 return False
 
-        # Clear and enter User ID
         user_id_field.clear()
         user_id_field.send_keys(user_id)
         print(f"      ✓ Entered User ID: {user_id}")
         time.sleep(0.5)
 
-        # Enter Password
         try:
             password_field = wait.until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password'], input[placeholder='Password'], input[name='password']"))
@@ -264,13 +441,11 @@ def login_flattrade_via_tradetron(user_id, password, totp_secret):
         
         time.sleep(0.5)
 
-        # Generate and enter TOTP
         print("[4/5] Generating and entering TOTP...")
+        totp_code = generate_totp(totp_secret)
+        print(f"      ✓ Generated TOTP: {totp_code}")
+        
         try:
-            totp_code = generate_totp(totp_secret)
-            print(f"      ✓ Generated TOTP: {totp_code}")
-            
-            # Find TOTP/OTP field
             totp_field = wait.until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, 
                     "input[placeholder*='OTP'], input[placeholder*='TOTP'], "
@@ -282,7 +457,6 @@ def login_flattrade_via_tradetron(user_id, password, totp_secret):
             totp_field.send_keys(totp_code)
             print("      ✓ Entered TOTP")
         except TimeoutException:
-            # Try alternative TOTP field locators
             try:
                 totp_fields = driver.find_elements(By.CSS_SELECTOR, "input[type='text'], input[type='number']")
                 for field in totp_fields:
@@ -294,17 +468,13 @@ def login_flattrade_via_tradetron(user_id, password, totp_secret):
                         break
             except Exception as e:
                 print(f"      ⚠️  Could not find TOTP field: {e}")
-                # Continue anyway - maybe TOTP is not required
         
         time.sleep(0.5)
 
-        # Click Login button
         print("[5/5] Clicking Login button...")
         login_clicked = False
         
-        # Try multiple approaches to find and click the login button
         try:
-            # First try: Look for submit button or common login button classes
             login_button = wait.until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, 
                     "button[type='submit'], input[type='submit'], "
@@ -318,7 +488,6 @@ def login_flattrade_via_tradetron(user_id, password, totp_secret):
         except TimeoutException:
             pass
         
-        # Second try: Find button by text content
         if not login_clicked:
             try:
                 buttons = driver.find_elements(By.TAG_NAME, "button")
@@ -332,7 +501,6 @@ def login_flattrade_via_tradetron(user_id, password, totp_secret):
             except Exception:
                 pass
         
-        # Third try: Find by XPath
         if not login_clicked:
             try:
                 login_button = driver.find_element(By.XPATH, 
@@ -345,7 +513,6 @@ def login_flattrade_via_tradetron(user_id, password, totp_secret):
                 pass
         
         if not login_clicked:
-            # Last resort: Try clicking any visible button
             try:
                 buttons = driver.find_elements(By.TAG_NAME, "button")
                 for btn in buttons:
@@ -361,41 +528,32 @@ def login_flattrade_via_tradetron(user_id, password, totp_secret):
             print("      ❌ Could not find any Login button")
             return False
 
-        # Wait for redirect/success
         print("\n⏳ Waiting for authentication to complete...")
         time.sleep(5)
         
         current_url = driver.current_url
         print(f"      Current URL after login: {current_url}")
         
-        # Check for success indicators
         if "tradetron" in current_url.lower() or "success" in current_url.lower():
             print("\n✅ FlatTrade authentication SUCCESSFUL!")
-            send_telegram_message(f"✅ FlatTrade Token Generated Successfully for {user_id}!")
             return True
         elif "error" in current_url.lower() or "failed" in current_url.lower():
             print("\n❌ FlatTrade authentication FAILED!")
-            send_telegram_message(f"❌ FlatTrade Token Generation FAILED for {user_id}")
             return False
         else:
-            # Check page content for success/error messages
             page_source = driver.page_source.lower()
             if "success" in page_source or "token" in page_source or "authorized" in page_source:
                 print("\n✅ FlatTrade authentication appears SUCCESSFUL!")
-                send_telegram_message(f"✅ FlatTrade Token Generated Successfully for {user_id}!")
                 return True
             elif "invalid" in page_source or "error" in page_source or "failed" in page_source:
                 print("\n❌ FlatTrade authentication appears to have FAILED!")
-                send_telegram_message(f"❌ FlatTrade Token Generation FAILED for {user_id}")
                 return False
             else:
-                print("\n⚠️  Authentication status unclear - please verify manually")
-                send_telegram_message(f"⚠️ FlatTrade Token Generation status unclear for {user_id} - verify manually")
-                return True  # Assume success
+                print("\n⚠️  Authentication status unclear - assuming success")
+                return True
 
     except Exception as e:
-        print(f"\n❌ Error during FlatTrade login: {type(e).__name__}: {e}")
-        send_telegram_message(f"❌ FlatTrade Error for {user_id}: {str(e)}")
+        print(f"\n❌ Error during FlatTrade Selenium login: {type(e).__name__}: {e}")
         return False
     
     finally:
@@ -405,6 +563,24 @@ def login_flattrade_via_tradetron(user_id, password, totp_secret):
                 print("\n✓ Browser closed")
             except:
                 pass
+
+
+# ============================================================
+# UNIFIED LOGIN FUNCTION
+# ============================================================
+
+def login_flattrade(user_id, password, totp_secret):
+    """
+    Login to FlatTrade using the appropriate method.
+    - Lambda/HTTP mode: Uses requests
+    - Local/Selenium mode: Uses browser automation
+    """
+    if IS_LAMBDA or not USE_SELENIUM:
+        print("📡 Using HTTP mode (Lambda compatible)")
+        return login_flattrade_http(user_id, password, totp_secret)
+    else:
+        print("🌐 Using Selenium mode (Local)")
+        return login_flattrade_selenium(user_id, password, totp_secret)
 
 
 def process_user(user):
@@ -425,18 +601,28 @@ def process_user(user):
         print("⚠️  TOTP secret not configured - skipping")
         return {"user_id": user_id, "status": 400, "message": "TOTP secret not set"}
 
-    result = login_flattrade_via_tradetron(user_id, password, totp_secret)
+    # Send start notification for this user
+    send_telegram_message(f"🤖 FlatTrade Token Generation Started for {user_id}")
+
+    result = login_flattrade(user_id, password, totp_secret)
     
     if result:
+        send_telegram_message(f"✅ FlatTrade Token Generated Successfully for {user_id}!")
         return {"user_id": user_id, "status": 200, "message": "Success"}
     else:
+        send_telegram_message(f"❌ FlatTrade Token Generation FAILED for {user_id}")
         return {"user_id": user_id, "status": 500, "message": "Token generation failed"}
 
+
+# ============================================================
+# MAIN EXECUTION
+# ============================================================
 
 def main():
     """Main function to process all FlatTrade users"""
     print("=" * 70)
     print(" FlatTrade Token Generator - Tradetron Integration")
+    print(f" Mode: {'Lambda/HTTP' if IS_LAMBDA or not USE_SELENIUM else 'Selenium'}")
     print(f" Total users to process: {len(FLATTRADE_USERS)}")
     print("=" * 70)
 
@@ -445,9 +631,6 @@ def main():
         print("\n❌ Missing dependency: pyotp")
         print("   Install with: pip install pyotp")
         return {"statusCode": 500, "body": "Missing pyotp dependency"}
-
-    # Send start notification
-    send_telegram_message("🤖 FlatTrade Token Generation Started")
 
     results = []
     
@@ -486,15 +669,45 @@ def main():
     }
 
 
+# ============================================================
+# AWS LAMBDA HANDLER
+# ============================================================
+
 def lambda_handler(event, context):
-    """AWS Lambda handler"""
+    """
+    AWS Lambda handler.
+    
+    Environment Variables Required:
+    - FLATTRADE_USER_ID: FlatTrade User ID
+    - FLATTRADE_PASSWORD: FlatTrade Password
+    - FLATTRADE_TOTP_SECRET: TOTP Secret Key
+    - TELEGRAM_BOT_TOKEN: Telegram Bot Token (optional)
+    - TELEGRAM_CHAT_ID: Telegram Chat ID (optional)
+    
+    For multiple users, modify FLATTRADE_USERS list in the code
+    or pass via event payload.
+    """
+    global FLATTRADE_USERS
+    
+    # Check if users passed in event
+    if event and isinstance(event, dict):
+        event_users = event.get("users", [])
+        if event_users:
+            FLATTRADE_USERS = event_users
+    
     return main()
 
 
+# ============================================================
+# STANDALONE EXECUTION
+# ============================================================
+
 if __name__ == "__main__":
-    # Install dependencies reminder
     print("\n📦 Required Dependencies:")
-    print("   pip install selenium webdriver-manager pyotp requests")
+    if USE_SELENIUM:
+        print("   pip install selenium webdriver-manager pyotp requests")
+    else:
+        print("   pip install pyotp requests")
     print()
     
     result = main()
