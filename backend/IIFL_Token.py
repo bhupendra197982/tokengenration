@@ -1,53 +1,44 @@
+#!/usr/bin/env python3
 """
-IIFL Token Generator - Tradetron Integration
-============================================
+IIFL Token Generation Script with Telegram Notifications
+==========================================================
+Automates the process of generating IIFL API tokens via Tradetron integration.
+Uses Selenium to automate the browser login process with TOTP authentication.
 
-Automates IIFL token generation from Tradetron using Playwright.
+This script is designed for IIFL broker token regeneration through Tradetron.
 
-Features:
-- Playwright browser automation
-- TOTP generation using pyotp
-- Telegram notifications
-- AWS Lambda compatible
-- Explicit waits for reliability
+Flow:
+1. Open Tradetron IIFL auth URL (https://iiflcapital.broker.tradetron.tech/auth/2901162)
+2. Enter Email/Mobile/Client ID/PAN and Password
+3. Click Login
+4. Enter TOTP on authentication screen
+5. Click Authorize on Tradetron authorization page
+6. Assert "Token generated successfully" is visible
 
-Environment Variables Required:
-- IIFL_USER_ID: Email / Mobile / Client ID / PAN
-- IIFL_PASSWORD: IIFL Password
-- IIFL_TOTP_SECRET: TOTP Secret Key
-- TELEGRAM_BOT_TOKEN: Telegram Bot Token
-- TELEGRAM_CHAT_ID: Telegram Chat ID
+Usage: python3 IIFL_Token.py
 
-Usage:
-    python IIFL_Token.py
-
-Author: Auto-generated
-Date: May 2026
+Configuration:
+- IIFL_USER_ID (Email/Mobile/Client ID/PAN)
+- IIFL_PASSWORD (Broker Password)  
+- IIFL_TOTP_SECRET (TOTP Secret Key for 2FA)
+- TELEGRAM_BOT_TOKEN
+- TELEGRAM_CHAT_ID
 """
 
 import os
+import sys
 import re
 import time
 import requests
 from datetime import datetime
 
-# ============================================================
-# OPTIONAL IMPORTS (graceful handling)
-# ============================================================
-
+# Optional imports for TOTP
 try:
     import pyotp
     HAS_PYOTP = True
 except ImportError:
     HAS_PYOTP = False
-    print("⚠️  pyotp not installed. Install with: pip install pyotp")
-
-try:
-    from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
-    HAS_PLAYWRIGHT = True
-except ImportError:
-    HAS_PLAYWRIGHT = False
-    print("⚠️  playwright not installed. Install with: pip install playwright && playwright install chromium")
+    print("⚠️  pyotp not installed. Run: pip install pyotp")
 
 # ============================================================
 # CONFIGURATION
@@ -56,24 +47,36 @@ except ImportError:
 # Detect AWS Lambda environment
 IS_LAMBDA = os.environ.get('AWS_LAMBDA_FUNCTION_NAME') is not None
 
-# IIFL Credentials (from environment variables or hardcoded for testing)
-IIFL_CONFIG = {
-    "user_id": os.environ.get("IIFL_USER_ID", "YOUR_USER_ID"),
-    "password": os.environ.get("IIFL_PASSWORD", "YOUR_PASSWORD"),
-    "totp_secret": os.environ.get("IIFL_TOTP_SECRET", "YOUR_TOTP_SECRET"),
-}
+# ============================================================
+# IIFL USER CREDENTIALS
+# ============================================================
+IIFL_USERS = [
+    {
+        "user_id": os.environ.get("IIFL_USER_ID", "YOUR_USER_ID"),
+        "password": os.environ.get("IIFL_PASSWORD", "YOUR_PASSWORD"),
+        "totp_secret": os.environ.get("IIFL_TOTP_SECRET", "YOUR_TOTP_SECRET")
+    }
+]
 
-# Telegram Configuration
+# Tradetron IIFL Auth URL
+TRADETRON_IIFL_AUTH_URL = os.environ.get(
+    "TRADETRON_IIFL_AUTH_URL", 
+    "https://iiflcapital.broker.tradetron.tech/auth/2901162"
+)
+
+# ============================================================
+# TELEGRAM CONFIGURATION
+# ============================================================
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID")
 
-# URLs
-TRADETRON_IIFL_AUTH_URL = "https://iiflcapital.broker.tradetron.tech/auth/2901162"
-
-# Timeouts (in milliseconds for Playwright)
-PAGE_LOAD_TIMEOUT = 30000  # 30 seconds
-ELEMENT_TIMEOUT = 15000    # 15 seconds
-NAVIGATION_TIMEOUT = 60000 # 60 seconds
+TELEGRAM_BOTS = [
+    {
+        "name": "Primary Bot",
+        "token": TELEGRAM_BOT_TOKEN,
+        "chat_id": TELEGRAM_CHAT_ID
+    }
+]
 
 
 # ============================================================
@@ -85,74 +88,47 @@ def get_current_timestamp():
     return datetime.now().strftime("%b %d, %H:%M:%S")
 
 
-def send_telegram_message(message: str) -> bool:
-    """
-    Send a message via Telegram Bot API.
-    
-    Args:
-        message: The message to send
-        
-    Returns:
-        True if successful, False otherwise
-    """
-    if TELEGRAM_BOT_TOKEN == "YOUR_BOT_TOKEN" or TELEGRAM_CHAT_ID == "YOUR_CHAT_ID":
-        print(f"📱 [Telegram Disabled] {message}")
-        return False
-    
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": message,
-            "parse_mode": "HTML"
-        }
-        response = requests.post(url, json=payload, timeout=10)
-        
-        if response.status_code == 200:
-            print(f"📱 [Telegram] Message sent successfully")
-            return True
-        else:
-            print(f"📱 [Telegram] Failed: {response.status_code}")
-            return False
-            
-    except Exception as e:
-        print(f"📱 [Telegram] Error: {e}")
-        return False
+def send_telegram_message(message):
+    """Send a message to all configured Telegram bots/channels"""
+    if not TELEGRAM_BOTS:
+        print("⚠️  No Telegram bots configured - skipping notification")
+        return
+
+    for bot in TELEGRAM_BOTS:
+        bot_token = bot.get("token")
+        chat_id = bot.get("chat_id")
+        bot_name = bot.get("name", "Unknown Bot")
+
+        if not bot_token or not chat_id or bot_token == "YOUR_BOT_TOKEN":
+            print(f"📱 [Telegram Disabled] {message}")
+            continue
+
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        payload = {"chat_id": chat_id, "text": message}
+
+        try:
+            response = requests.post(url, json=payload, timeout=20)
+            if response.status_code == 200:
+                print(f"✓ Telegram notification sent via '{bot_name}'")
+            else:
+                print(f"⚠️  Telegram error on '{bot_name}': {response.status_code}")
+        except Exception as e:
+            print(f"⚠️  Telegram error on '{bot_name}': {e}")
 
 
-def generate_totp(secret: str) -> str:
-    """
-    Generate TOTP code from secret.
-    
-    Args:
-        secret: TOTP secret key
-        
-    Returns:
-        6-digit TOTP code
-    """
+def generate_totp(secret):
+    """Generate TOTP code from secret"""
     if not HAS_PYOTP:
-        raise ImportError("pyotp is required for TOTP generation")
+        raise ImportError("pyotp is required for TOTP generation. Install with: pip install pyotp")
     
-    # Clean the secret (remove spaces, convert to uppercase)
+    # Clean the secret
     clean_secret = secret.replace(" ", "").replace("-", "").upper()
-    
     totp = pyotp.TOTP(clean_secret)
-    code = totp.now()
-    
-    print(f"   🔐 Generated TOTP: {code}")
-    return code
+    return totp.now()
 
 
-def extract_last_updated(page_content: str) -> str:
-    """
-    Extract 'Last Updated' timestamp from page content.
-    
-    Args:
-        page_content: HTML content of the page
-        
-    Returns:
-        Extracted timestamp or empty string
-    """
+def extract_last_updated(page_content):
+    """Extract 'Last Updated' timestamp from page content"""
     patterns = [
         r'Last\s+Updated[:\s]+([A-Za-z]+\s+\d{1,2},?\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AP]M)?)',
         r'Updated[:\s]+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})',
@@ -169,530 +145,628 @@ def extract_last_updated(page_content: str) -> str:
 
 
 # ============================================================
-# PLAYWRIGHT BROWSER SETUP
+# SELENIUM AUTOMATION FOR IIFL LOGIN
 # ============================================================
 
-def setup_browser(playwright):
-    """
-    Setup Playwright browser with appropriate configuration.
+def setup_selenium_driver():
+    """Setup Selenium WebDriver with Chrome"""
+    try:
+        from selenium import webdriver
+        from selenium.webdriver.chrome.service import Service
+        from selenium.webdriver.chrome.options import Options
+        from webdriver_manager.chrome import ChromeDriverManager
+    except ImportError:
+        print("❌ Selenium not installed!")
+        print("   Run: pip install selenium webdriver-manager")
+        sys.exit(1)
+
+    chrome_options = Options()
+    # Headless mode (no browser window)
+    chrome_options.add_argument("--headless=new")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option("useAutomationExtension", False)
     
-    Args:
-        playwright: Playwright instance
-        
-    Returns:
-        Browser instance
-    """
-    # Browser launch arguments
-    launch_args = [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
-        "--disable-blink-features=AutomationControlled",
-        "--window-size=1920,1080",
-    ]
-    
-    # Additional args for Lambda
-    if IS_LAMBDA:
-        launch_args.extend([
-            "--single-process",
-            "--disable-extensions",
-            "--disable-background-networking",
-        ])
-    
-    browser = playwright.chromium.launch(
-        headless=True,
-        args=launch_args
+    # Add user agent
+    chrome_options.add_argument(
+        "user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     )
-    
-    return browser
+
+    try:
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+        driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+            "source": """
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                })
+            """
+        })
+        return driver
+    except Exception as e:
+        print(f"❌ Failed to setup Chrome driver: {e}")
+        sys.exit(1)
 
 
-def create_context(browser):
+def login_iifl_via_tradetron(user_id, password, totp_secret):
     """
-    Create browser context with appropriate settings.
+    Login to IIFL via Tradetron auth URL and complete authentication.
     
-    Args:
-        browser: Browser instance
-        
+    Flow:
+    1. Open Tradetron IIFL auth URL
+    2. Enter Email/Mobile/Client ID/PAN and Password
+    3. Click Login
+    4. Wait for TOTP screen and enter TOTP
+    5. Click Verify
+    6. Wait for Authorize Tradetron page and click Authorize
+    7. Assert "Token generated successfully" is visible
+    
     Returns:
-        Browser context
+        dict with success status, message, and last_updated timestamp
     """
-    context = browser.new_context(
-        viewport={"width": 1920, "height": 1080},
-        user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        ignore_https_errors=True,
-    )
-    
-    # Block unnecessary resources for faster loading
-    context.route("**/*.{png,jpg,jpeg,gif,svg,ico,woff,woff2}", lambda route: route.abort())
-    
-    return context
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
-
-# ============================================================
-# IIFL TOKEN GENERATION
-# ============================================================
-
-def generate_iifl_token(user_id: str, password: str, totp_secret: str) -> dict:
-    """
-    Generate IIFL token using Playwright automation.
-    
-    Args:
-        user_id: IIFL User ID (Email/Mobile/Client ID/PAN)
-        password: IIFL Password
-        totp_secret: TOTP Secret Key
-        
-    Returns:
-        dict with success status, message, and timestamp
-    """
     print(f"\n{'='*70}")
-    print(f" IIFL Token Generator - Tradetron Integration")
+    print(f" IIFL Token Generation via Tradetron")
     print(f" User ID: {user_id}")
     print(f" Timestamp: {get_current_timestamp()}")
     print(f"{'='*70}\n")
-    
-    if not HAS_PLAYWRIGHT:
-        return {
-            "success": False,
-            "message": "Playwright not installed",
-            "last_updated": None
-        }
-    
-    if not HAS_PYOTP:
-        return {
-            "success": False,
-            "message": "pyotp not installed",
-            "last_updated": None
-        }
-    
-    browser = None
-    context = None
-    page = None
+
+    driver = None
     
     try:
-        with sync_playwright() as playwright:
-            # Setup browser
-            print("[1/5] 🌐 Launching browser...")
-            browser = setup_browser(playwright)
-            context = create_context(browser)
-            page = context.new_page()
-            
-            page.set_default_timeout(ELEMENT_TIMEOUT)
-            page.set_default_navigation_timeout(NAVIGATION_TIMEOUT)
-            
-            print("      ✓ Browser launched successfully")
-            
-            # ============================================
-            # STEP 1: Navigate to Tradetron IIFL Auth URL
-            # ============================================
-            print(f"\n[2/5] 📍 Navigating to Tradetron IIFL auth page...")
-            print(f"      URL: {TRADETRON_IIFL_AUTH_URL}")
-            
-            page.goto(TRADETRON_IIFL_AUTH_URL, wait_until="networkidle")
-            
-            current_url = page.url
-            print(f"      Current URL: {current_url}")
-            
-            # Wait for login page to load
-            page.wait_for_load_state("domcontentloaded")
-            print("      ✓ Page loaded")
-            
-            # ============================================
-            # STEP 2: Login with credentials
-            # ============================================
-            print(f"\n[3/5] 🔑 Entering login credentials...")
-            
-            # Wait for login form - try multiple selectors
-            login_selectors = [
-                'input[name="userId"]',
-                'input[name="user_id"]',
-                'input[name="clientId"]',
-                'input[name="client_id"]',
-                'input[name="email"]',
-                'input[name="mobile"]',
-                'input[name="pan"]',
-                'input[type="text"]',
-                'input[placeholder*="Client"]',
-                'input[placeholder*="User"]',
-                'input[placeholder*="Email"]',
-                'input[placeholder*="Mobile"]',
-                'input[placeholder*="PAN"]',
-            ]
-            
-            user_input = None
-            for selector in login_selectors:
-                try:
-                    user_input = page.wait_for_selector(selector, timeout=5000)
-                    if user_input:
-                        print(f"      Found user input: {selector}")
-                        break
-                except:
-                    continue
-            
-            if not user_input:
-                # Try finding first visible text input
-                user_input = page.locator('input[type="text"]:visible').first
-            
-            # Assert login page loaded
-            assert user_input, "Login page did not load - user input not found"
-            print("      ✓ Login page loaded")
-            
-            # Enter User ID
-            user_input.fill(user_id)
-            print(f"      ✓ Entered User ID: {user_id}")
-            
-            # Find and fill password
-            password_selectors = [
-                'input[name="password"]',
-                'input[name="pwd"]',
-                'input[type="password"]',
-                'input[placeholder*="Password"]',
-            ]
-            
-            password_input = None
-            for selector in password_selectors:
-                try:
-                    password_input = page.wait_for_selector(selector, timeout=3000)
-                    if password_input:
-                        break
-                except:
-                    continue
-            
-            if password_input:
-                password_input.fill(password)
-                print("      ✓ Entered Password")
-            else:
-                print("      ⚠️  Password field not found (may be on next page)")
-            
-            # Click Login button
-            login_button_selectors = [
-                'button:has-text("Login")',
-                'button:has-text("Log In")',
-                'button:has-text("Sign In")',
-                'button:has-text("Submit")',
-                'button:has-text("Continue")',
-                'input[type="submit"]',
-                'button[type="submit"]',
-                '.login-btn',
-                '#loginBtn',
-            ]
-            
-            login_clicked = False
-            for selector in login_button_selectors:
-                try:
-                    button = page.locator(selector).first
-                    if button.is_visible():
-                        button.click()
+        # Setup driver
+        print("[1/6] 🌐 Setting up browser...")
+        driver = setup_selenium_driver()
+        wait = WebDriverWait(driver, 30)
+        print("      ✓ Browser launched successfully")
+
+        # ============================================
+        # STEP 1: Open Tradetron IIFL auth URL
+        # ============================================
+        print(f"\n[2/6] 📍 Opening Tradetron IIFL auth URL...")
+        print(f"      URL: {TRADETRON_IIFL_AUTH_URL}")
+        driver.get(TRADETRON_IIFL_AUTH_URL)
+        time.sleep(3)
+        
+        current_url = driver.current_url
+        print(f"      Current URL: {current_url}")
+        
+        # Assert: Login page loaded
+        page_source = driver.page_source.lower()
+        assert "login" in page_source or "sign in" in page_source or "client" in page_source or "password" in page_source, \
+            "Login page did not load properly"
+        print("      ✓ Login page loaded")
+
+        # ============================================
+        # STEP 2: Enter Login Credentials
+        # ============================================
+        print(f"\n[3/6] 🔑 Entering login credentials...")
+        
+        # Wait for and find User ID field
+        user_id_selectors = [
+            "input[placeholder*='Client']",
+            "input[placeholder*='client']",
+            "input[placeholder*='User']",
+            "input[placeholder*='user']",
+            "input[placeholder*='Email']",
+            "input[placeholder*='email']",
+            "input[placeholder*='Mobile']",
+            "input[placeholder*='mobile']",
+            "input[placeholder*='PAN']",
+            "input[name='userId']",
+            "input[name='clientId']",
+            "input[name='client_id']",
+            "input[name='email']",
+            "input[id='userId']",
+            "input[id='clientId']",
+            "input[type='text']",
+        ]
+        
+        user_id_field = None
+        for selector in user_id_selectors:
+            try:
+                user_id_field = wait.until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                )
+                if user_id_field.is_displayed():
+                    print(f"      Found User ID field: {selector}")
+                    break
+            except:
+                continue
+        
+        if not user_id_field:
+            try:
+                user_id_field = driver.find_element(By.XPATH, 
+                    "//input[contains(@placeholder, 'User') or contains(@placeholder, 'Client') or "
+                    "contains(@placeholder, 'Email') or contains(@placeholder, 'Mobile') or "
+                    "contains(@placeholder, 'PAN') or @type='text']")
+            except NoSuchElementException:
+                print("      ❌ Could not find User ID field")
+                return {"success": False, "message": "User ID field not found", "last_updated": None}
+        
+        # Enter User ID
+        user_id_field.clear()
+        user_id_field.send_keys(user_id)
+        print(f"      ✓ Entered User ID: {user_id}")
+        time.sleep(0.5)
+
+        # Find and enter Password
+        password_selectors = [
+            "input[type='password']",
+            "input[placeholder*='Password']",
+            "input[placeholder*='password']",
+            "input[name='password']",
+            "input[name='pwd']",
+            "input[id='password']",
+        ]
+        
+        password_field = None
+        for selector in password_selectors:
+            try:
+                password_field = driver.find_element(By.CSS_SELECTOR, selector)
+                if password_field.is_displayed():
+                    break
+            except:
+                continue
+        
+        if not password_field:
+            print("      ❌ Could not find Password field")
+            return {"success": False, "message": "Password field not found", "last_updated": None}
+        
+        password_field.clear()
+        password_field.send_keys(password)
+        print("      ✓ Entered Password")
+        time.sleep(0.5)
+
+        # ============================================
+        # STEP 3: Click Login Button
+        # ============================================
+        print(f"\n[4/6] 🔓 Clicking Login button...")
+        
+        login_clicked = False
+        login_button_selectors = [
+            "button[type='submit']",
+            "input[type='submit']",
+            "button.login-btn",
+            "button.btn-primary",
+            "button.submit-btn",
+            "#loginBtn",
+            ".login-btn",
+        ]
+        
+        for selector in login_button_selectors:
+            try:
+                login_button = driver.find_element(By.CSS_SELECTOR, selector)
+                if login_button.is_displayed() and login_button.is_enabled():
+                    login_button.click()
+                    login_clicked = True
+                    print(f"      ✓ Clicked Login button: {selector}")
+                    break
+            except:
+                continue
+        
+        # Try finding by text content
+        if not login_clicked:
+            try:
+                buttons = driver.find_elements(By.TAG_NAME, "button")
+                for btn in buttons:
+                    btn_text = btn.text.lower().strip()
+                    if btn_text in ["log in", "login", "submit", "sign in", "continue"]:
+                        btn.click()
                         login_clicked = True
-                        print(f"      ✓ Clicked Login button: {selector}")
+                        print(f"      ✓ Clicked Login button (by text: '{btn_text}')")
                         break
-                except:
-                    continue
-            
-            if not login_clicked:
-                # Try clicking any visible button with login-related text
-                page.get_by_role("button", name=re.compile(r"login|sign.?in|submit|continue", re.IGNORECASE)).first.click()
-                print("      ✓ Clicked Login button (by role)")
-            
-            # Wait for navigation
-            page.wait_for_load_state("networkidle")
-            time.sleep(2)  # Small delay for any JS execution
-            
-            send_telegram_message(f"🔑 IIFL Login submitted for {user_id}")
-            print("      ✓ Login submitted")
-            
-            # ============================================
-            # STEP 3: TOTP Authentication
-            # ============================================
-            print(f"\n[4/5] 🔐 Handling TOTP authentication...")
+            except Exception:
+                pass
+        
+        # Try XPath
+        if not login_clicked:
+            try:
+                login_button = driver.find_element(By.XPATH, 
+                    "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'login') or "
+                    "contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'log in') or "
+                    "contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'sign in')]")
+                login_button.click()
+                login_clicked = True
+                print("      ✓ Clicked Login button (by XPath)")
+            except Exception:
+                pass
+        
+        if not login_clicked:
+            print("      ⚠️  Could not find Login button - trying to continue anyway")
+        
+        time.sleep(3)
+        send_telegram_message(f"🔑 IIFL Login submitted for {user_id}")
+
+        # ============================================
+        # STEP 4: Handle TOTP Authentication
+        # ============================================
+        print(f"\n[5/6] 🔐 Handling TOTP authentication...")
+        
+        time.sleep(2)
+        current_url = driver.current_url
+        page_source = driver.page_source.lower()
+        
+        # Check if TOTP/OTP screen is present
+        if "totp" in page_source or "otp" in page_source or "authenticator" in page_source or "2fa" in page_source or "verify" in page_source:
+            print("      ✓ TOTP authentication page loaded")
             
             # Generate TOTP
             totp_code = generate_totp(totp_secret)
+            print(f"      ✓ Generated TOTP: {totp_code}")
             
-            # Wait for TOTP input field
+            # Find TOTP input field
             totp_selectors = [
-                'input[name="totp"]',
-                'input[name="otp"]',
-                'input[name="twofa"]',
-                'input[name="2fa"]',
-                'input[placeholder*="TOTP"]',
-                'input[placeholder*="OTP"]',
-                'input[placeholder*="2FA"]',
-                'input[placeholder*="Authenticator"]',
-                'input[type="tel"]',
-                'input[maxlength="6"]',
+                "input[placeholder*='TOTP']",
+                "input[placeholder*='totp']",
+                "input[placeholder*='OTP']",
+                "input[placeholder*='otp']",
+                "input[placeholder*='Authenticator']",
+                "input[placeholder*='2FA']",
+                "input[name='totp']",
+                "input[name='otp']",
+                "input[name='twofa']",
+                "input[id='totp']",
+                "input[id='otp']",
+                "input[type='tel']",
+                "input[maxlength='6']",
             ]
             
-            totp_input = None
+            totp_field = None
             for selector in totp_selectors:
                 try:
-                    totp_input = page.wait_for_selector(selector, timeout=5000)
-                    if totp_input:
-                        print(f"      Found TOTP input: {selector}")
+                    totp_field = driver.find_element(By.CSS_SELECTOR, selector)
+                    if totp_field.is_displayed():
+                        print(f"      Found TOTP field: {selector}")
                         break
                 except:
                     continue
             
-            # Assert TOTP page loaded
-            if not totp_input:
-                # Check if we're on a page that asks for TOTP
-                page_text = page.content().lower()
-                if "totp" in page_text or "otp" in page_text or "authenticator" in page_text or "2fa" in page_text:
-                    # Try finding any numeric input
-                    totp_input = page.locator('input[type="tel"], input[maxlength="6"], input[type="number"]').first
-                    if not totp_input.is_visible():
-                        totp_input = None
+            # Fallback: find numeric input
+            if not totp_field:
+                try:
+                    inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text'], input[type='number'], input[type='tel']")
+                    for inp in inputs:
+                        if inp.is_displayed():
+                            placeholder = inp.get_attribute("placeholder") or ""
+                            maxlen = inp.get_attribute("maxlength") or ""
+                            if "otp" in placeholder.lower() or "totp" in placeholder.lower() or maxlen == "6":
+                                totp_field = inp
+                                print("      Found TOTP field (by attributes)")
+                                break
+                except:
+                    pass
             
-            if totp_input:
-                assert totp_input, "TOTP page did not load - TOTP input not found"
-                print("      ✓ TOTP page loaded")
-                
-                # Enter TOTP
-                totp_input.fill(totp_code)
-                print(f"      ✓ Entered TOTP: {totp_code}")
+            if totp_field:
+                totp_field.clear()
+                totp_field.send_keys(totp_code)
+                print("      ✓ Entered TOTP")
+                time.sleep(0.5)
                 
                 # Click Verify/Submit button
-                verify_button_selectors = [
-                    'button:has-text("Verify")',
-                    'button:has-text("Submit")',
-                    'button:has-text("Authenticate")',
-                    'button:has-text("Continue")',
-                    'button:has-text("Confirm")',
-                    'button[type="submit"]',
-                    'input[type="submit"]',
+                verify_clicked = False
+                verify_selectors = [
+                    "button[type='submit']",
+                    "input[type='submit']",
+                    "button.verify-btn",
+                    "button.submit-btn",
+                    "button.btn-primary",
                 ]
                 
-                verify_clicked = False
-                for selector in verify_button_selectors:
+                for selector in verify_selectors:
                     try:
-                        button = page.locator(selector).first
-                        if button.is_visible():
-                            button.click()
+                        verify_button = driver.find_element(By.CSS_SELECTOR, selector)
+                        if verify_button.is_displayed() and verify_button.is_enabled():
+                            verify_button.click()
                             verify_clicked = True
                             print(f"      ✓ Clicked Verify button: {selector}")
                             break
                     except:
                         continue
                 
+                # Try by text
                 if not verify_clicked:
-                    page.get_by_role("button", name=re.compile(r"verify|submit|authenticate|continue|confirm", re.IGNORECASE)).first.click()
-                    print("      ✓ Clicked Verify button (by role)")
-                
-                # Wait for navigation
-                page.wait_for_load_state("networkidle")
-                time.sleep(2)
-                
-                send_telegram_message(f"🔐 IIFL TOTP submitted for {user_id}")
-                print("      ✓ TOTP submitted")
-            else:
-                print("      ℹ️  No TOTP page detected (may not be required or already authenticated)")
-            
-            # ============================================
-            # STEP 4: Authorize Tradetron
-            # ============================================
-            print(f"\n[5/5] ✅ Handling Tradetron authorization...")
-            
-            # Check if we're on the authorize page
-            current_url = page.url
-            page_content = page.content().lower()
-            
-            if "authorize" in page_content or "permission" in page_content or "allow" in page_content:
-                print("      Found authorization page")
-                
-                # Assert authorize page loaded
-                assert "authorize" in page_content or "tradetron" in current_url.lower(), "Authorize page did not load"
-                print("      ✓ Authorize page loaded")
-                
-                # Click Authorize button
-                authorize_selectors = [
-                    'button:has-text("Authorize")',
-                    'button:has-text("Allow")',
-                    'button:has-text("Approve")',
-                    'button:has-text("Grant")',
-                    'button:has-text("Accept")',
-                    'button:has-text("Confirm")',
-                    'button:has-text("Continue")',
-                    'a:has-text("Authorize")',
-                    '.authorize-btn',
-                    '#authorizeBtn',
-                ]
-                
-                authorize_clicked = False
-                for selector in authorize_selectors:
                     try:
-                        button = page.locator(selector).first
-                        if button.is_visible():
-                            button.click()
-                            authorize_clicked = True
-                            print(f"      ✓ Clicked Authorize button: {selector}")
-                            break
+                        buttons = driver.find_elements(By.TAG_NAME, "button")
+                        for btn in buttons:
+                            btn_text = btn.text.lower().strip()
+                            if btn_text in ["verify", "submit", "authenticate", "continue", "confirm"]:
+                                btn.click()
+                                verify_clicked = True
+                                print(f"      ✓ Clicked Verify button (by text: '{btn_text}')")
+                                break
                     except:
-                        continue
+                        pass
                 
-                if not authorize_clicked:
-                    try:
-                        page.get_by_role("button", name=re.compile(r"authorize|allow|approve|grant|accept|confirm", re.IGNORECASE)).first.click()
-                        print("      ✓ Clicked Authorize button (by role)")
-                    except:
-                        print("      ⚠️  Authorize button not found (may auto-authorize)")
-                
-                # Wait for final redirect
-                page.wait_for_load_state("networkidle")
                 time.sleep(3)
-                
-                send_telegram_message(f"✅ IIFL Authorization completed for {user_id}")
+                send_telegram_message(f"🔐 IIFL TOTP submitted for {user_id}")
             else:
-                print("      ℹ️  No explicit authorization page (may be auto-authorized)")
+                print("      ⚠️  TOTP field not found - may not be required")
+        else:
+            print("      ℹ️  No TOTP page detected - continuing")
+
+        # ============================================
+        # STEP 5: Handle Tradetron Authorization
+        # ============================================
+        print(f"\n[6/6] ✅ Handling Tradetron authorization...")
+        
+        time.sleep(2)
+        current_url = driver.current_url
+        page_source = driver.page_source.lower()
+        
+        # Check if we're on authorization page
+        if "authorize" in page_source or "permission" in page_source or "allow" in page_source or "grant" in page_source:
+            print("      ✓ Authorization page loaded")
             
-            # ============================================
-            # STEP 5: Verify Success
-            # ============================================
-            print(f"\n[✓] Verifying token generation...")
+            # Assert: Authorize page loaded
+            assert "authorize" in page_source or "tradetron" in current_url.lower(), \
+                "Authorize page did not load"
             
-            final_url = page.url
-            final_content = page.content()
-            
-            print(f"      Final URL: {final_url}")
-            
-            # Extract timestamp
-            last_updated = extract_last_updated(final_content)
-            if not last_updated:
-                last_updated = get_current_timestamp()
-            
-            # Check for success indicators
-            success_indicators = [
-                "token generated successfully",
-                "token generated",
-                "successfully generated",
-                "authentication successful",
-                "authorized successfully",
-                "success",
-                "token refreshed",
+            # Click Authorize button
+            authorize_clicked = False
+            authorize_selectors = [
+                "button.authorize-btn",
+                "button.btn-primary",
+                "button[type='submit']",
+                "#authorizeBtn",
+                ".authorize-btn",
             ]
             
-            page_text_lower = final_content.lower()
+            for selector in authorize_selectors:
+                try:
+                    auth_button = driver.find_element(By.CSS_SELECTOR, selector)
+                    if auth_button.is_displayed() and auth_button.is_enabled():
+                        auth_button.click()
+                        authorize_clicked = True
+                        print(f"      ✓ Clicked Authorize button: {selector}")
+                        break
+                except:
+                    continue
             
-            # Assert success message visible
-            token_success = any(indicator in page_text_lower for indicator in success_indicators)
-            url_success = "success" in final_url.lower() or "tradetron" in final_url.lower()
+            # Try by text
+            if not authorize_clicked:
+                try:
+                    buttons = driver.find_elements(By.TAG_NAME, "button")
+                    for btn in buttons:
+                        btn_text = btn.text.lower().strip()
+                        if btn_text in ["authorize", "allow", "approve", "grant", "accept", "confirm", "continue"]:
+                            btn.click()
+                            authorize_clicked = True
+                            print(f"      ✓ Clicked Authorize button (by text: '{btn_text}')")
+                            break
+                except:
+                    pass
             
-            if token_success or url_success:
-                print("\n" + "="*70)
-                print("✅ IIFL Token Generated Successfully")
-                print(f"📅 Last Updated: {last_updated}")
-                print("="*70 + "\n")
+            # Try links too
+            if not authorize_clicked:
+                try:
+                    links = driver.find_elements(By.TAG_NAME, "a")
+                    for link in links:
+                        link_text = link.text.lower().strip()
+                        if link_text in ["authorize", "allow", "approve"]:
+                            link.click()
+                            authorize_clicked = True
+                            print(f"      ✓ Clicked Authorize link (by text: '{link_text}')")
+                            break
+                except:
+                    pass
+            
+            time.sleep(3)
+            send_telegram_message(f"✅ IIFL Authorization completed for {user_id}")
+        else:
+            print("      ℹ️  No explicit authorization page - may be auto-authorized")
+
+        # ============================================
+        # STEP 6: Verify Success
+        # ============================================
+        print(f"\n[✓] Verifying token generation...")
+        
+        time.sleep(2)
+        final_url = driver.current_url
+        final_page_source = driver.page_source
+        final_page_lower = final_page_source.lower()
+        
+        print(f"      Final URL: {final_url}")
+        
+        # Get timestamp
+        last_updated = extract_last_updated(final_page_source) or get_current_timestamp()
+        
+        # Assert: "Token generated successfully" is visible
+        success_indicators = [
+            "token generated successfully",
+            "token generated",
+            "successfully generated",
+            "authentication successful",
+            "authorized successfully",
+            "success",
+            "token refreshed",
+            "connected successfully",
+        ]
+        
+        token_success = any(indicator in final_page_lower for indicator in success_indicators)
+        url_success = "success" in final_url.lower() or "tradetron" in final_url.lower()
+        
+        if token_success:
+            print("\n" + "="*70)
+            print("✅ IIFL Token Generated Successfully")
+            print(f"📅 Last Updated: {last_updated}")
+            print("="*70 + "\n")
+            
+            return {
+                "success": True,
+                "message": "Token generated successfully",
+                "last_updated": last_updated
+            }
+        elif url_success:
+            print("\n" + "="*70)
+            print("✅ IIFL Token Generated Successfully")
+            print(f"📅 Last Updated: {last_updated}")
+            print("="*70 + "\n")
+            
+            return {
+                "success": True,
+                "message": "Token generated (URL indicates success)",
+                "last_updated": last_updated
+            }
+        else:
+            # Check for errors
+            error_indicators = ["error", "failed", "invalid", "incorrect", "denied", "expired"]
+            has_error = any(indicator in final_page_lower for indicator in error_indicators)
+            
+            if has_error:
+                print("\n❌ Token generation FAILED - error detected on page")
+                return {
+                    "success": False,
+                    "message": "Token generation failed - error on page",
+                    "last_updated": None
+                }
+            else:
+                print("\n⚠️  Token generation status unclear - assuming success")
+                print(f"📅 Timestamp: {last_updated}")
                 
                 return {
                     "success": True,
-                    "message": "Token generated successfully",
+                    "message": "Token generation completed (status unclear)",
                     "last_updated": last_updated
                 }
-            else:
-                # Check for error indicators
-                error_indicators = ["error", "failed", "invalid", "incorrect", "denied"]
-                has_error = any(indicator in page_text_lower for indicator in error_indicators)
-                
-                if has_error:
-                    print("\n❌ Token generation appears to have failed")
-                    return {
-                        "success": False,
-                        "message": "Token generation failed - error detected on page",
-                        "last_updated": None
-                    }
-                else:
-                    # Assume success if no explicit error
-                    print("\n⚠️  Token generation status unclear - assuming success")
-                    print(f"📅 Timestamp: {last_updated}")
-                    
-                    return {
-                        "success": True,
-                        "message": "Token generation completed (status unclear)",
-                        "last_updated": last_updated
-                    }
-    
-    except PlaywrightTimeout as e:
-        error_msg = f"Timeout error: {str(e)}"
-        print(f"\n❌ {error_msg}")
-        return {
-            "success": False,
-            "message": error_msg,
-            "last_updated": None
-        }
-    
+
     except AssertionError as e:
         error_msg = f"Assertion failed: {str(e)}"
         print(f"\n❌ {error_msg}")
-        return {
-            "success": False,
-            "message": error_msg,
-            "last_updated": None
-        }
+        return {"success": False, "message": error_msg, "last_updated": None}
     
     except Exception as e:
         error_msg = f"{type(e).__name__}: {str(e)}"
         print(f"\n❌ Error during IIFL token generation: {error_msg}")
-        return {
-            "success": False,
-            "message": error_msg,
-            "last_updated": None
-        }
+        return {"success": False, "message": error_msg, "last_updated": None}
+    
+    finally:
+        if driver:
+            try:
+                driver.quit()
+                print("\n✓ Browser closed")
+            except:
+                pass
 
 
 # ============================================================
-# MAIN PROCESS FUNCTION
+# PROCESS USER FUNCTION
 # ============================================================
 
-def process_iifl_token() -> dict:
-    """
-    Process IIFL token generation with notifications.
-    
-    Returns:
-        dict with status code and result details
-    """
-    user_id = IIFL_CONFIG["user_id"]
-    password = IIFL_CONFIG["password"]
-    totp_secret = IIFL_CONFIG["totp_secret"]
-    
-    # Validate configuration
-    if user_id == "YOUR_USER_ID":
-        print("⚠️  User ID not configured")
-        return {"statusCode": 400, "body": "User ID not configured"}
-    
-    if password == "YOUR_PASSWORD":
-        print("⚠️  Password not configured")
-        return {"statusCode": 400, "body": "Password not configured"}
-    
-    if totp_secret == "YOUR_TOTP_SECRET":
-        print("⚠️  TOTP secret not configured")
-        return {"statusCode": 400, "body": "TOTP secret not configured"}
-    
+def process_user(user):
+    """Process token generation for a single user"""
+    user_id = user.get("user_id")
+    password = user.get("password")
+    totp_secret = user.get("totp_secret")
+
+    if not user_id or user_id == "YOUR_USER_ID":
+        print("⚠️  User ID not configured - skipping")
+        return {"user_id": "Not Configured", "status": 400, "message": "Credentials not set"}
+
+    if not password or password == "YOUR_PASSWORD":
+        print("⚠️  Password not configured - skipping")
+        return {"user_id": user_id, "status": 400, "message": "Password not set"}
+
+    if not totp_secret or totp_secret == "YOUR_TOTP_SECRET":
+        print("⚠️  TOTP secret not configured - skipping")
+        return {"user_id": user_id, "status": 400, "message": "TOTP secret not set"}
+
     # Send start notification
     send_telegram_message(f"🚀 IIFL Token Generation Started\n👤 User: {user_id}\n⏰ Time: {get_current_timestamp()}")
+
+    result = login_iifl_via_tradetron(user_id, password, totp_secret)
     
-    # Generate token
-    result = generate_iifl_token(user_id, password, totp_secret)
-    
-    # Send result notification
-    if result["success"]:
-        timestamp_info = f"\n📅 Last Updated: {result['last_updated']}" if result.get('last_updated') else ""
+    if result.get("success"):
+        timestamp_info = f"\n📅 Last Updated: {result.get('last_updated')}" if result.get('last_updated') else ""
         send_telegram_message(f"✅ IIFL Token Generated Successfully!\n👤 User: {user_id}{timestamp_info}")
-        
         return {
-            "statusCode": 200,
-            "body": "Token generated successfully",
-            "last_updated": result.get("last_updated"),
-            "user_id": user_id
+            "user_id": user_id,
+            "status": 200,
+            "message": "Success",
+            "last_updated": result.get("last_updated")
         }
     else:
         error_msg = result.get("message", "Unknown error")
-        send_telegram_message(f"❌ IIFL Token Generation Failed!\n👤 User: {user_id}\n⚠️ Error: {error_msg}")
-        
+        send_telegram_message(f"❌ IIFL Token Generation FAILED!\n👤 User: {user_id}\n⚠️ Error: {error_msg}")
         return {
-            "statusCode": 500,
-            "body": error_msg,
-            "user_id": user_id
+            "user_id": user_id,
+            "status": 500,
+            "message": error_msg
         }
+
+
+# ============================================================
+# MAIN EXECUTION
+# ============================================================
+
+def main():
+    """Main function to process all IIFL users"""
+    print("\n" + "="*70)
+    print(" IIFL Token Generator - Tradetron Integration (Selenium)")
+    print(f" Mode: {'AWS Lambda' if IS_LAMBDA else 'Local'}")
+    print(f" Total users to process: {len(IIFL_USERS)}")
+    print(f" Timestamp: {get_current_timestamp()}")
+    print("="*70 + "\n")
+
+    # Check dependencies
+    if not HAS_PYOTP:
+        print("❌ Missing dependency: pyotp")
+        print("   Install with: pip install pyotp")
+        return {"statusCode": 500, "body": "Missing pyotp dependency"}
+
+    results = []
+    
+    for idx, user in enumerate(IIFL_USERS, 1):
+        print(f"\n[{idx}/{len(IIFL_USERS)}] Processing user...")
+        result = process_user(user)
+        results.append(result)
+        
+        # Small delay between users
+        if idx < len(IIFL_USERS):
+            time.sleep(2)
+
+    # Summary
+    print(f"\n{'='*70}")
+    print(" SUMMARY")
+    print(f"{'='*70}")
+    
+    successful = sum(1 for r in results if r["status"] == 200)
+    failed = len(results) - successful
+
+    for result in results:
+        status_icon = "✅" if result["status"] == 200 else "❌"
+        timestamp_info = f" (Last Updated: {result.get('last_updated', 'N/A')})" if result["status"] == 200 else ""
+        print(f"{status_icon} {result['user_id']}: {result['message']}{timestamp_info}")
+
+    print(f"\nTotal: {successful} successful, {failed} failed")
+    print(f"{'='*70}\n")
+
+    # Send summary notification
+    summary_lines = [f"🔄 IIFL Token Generation Summary:"]
+    for result in results:
+        if result["status"] == 200:
+            timestamp_info = result.get('last_updated', 'N/A')
+            summary_lines.append(f"✅ {result['user_id']}: {timestamp_info}")
+        else:
+            summary_lines.append(f"❌ {result['user_id']}: {result.get('message', 'Failed')}")
+    
+    summary_msg = "\n".join(summary_lines)
+    send_telegram_message(summary_msg)
+
+    return {
+        "statusCode": 200 if failed == 0 else 207,
+        "body": f"Success: {successful}, Failed: {failed}",
+        "details": results
+    }
 
 
 # ============================================================
@@ -704,85 +778,21 @@ def lambda_handler(event, context):
     AWS Lambda handler for IIFL token generation.
     
     Environment Variables Required:
-    - IIFL_USER_ID: IIFL User ID
+    - IIFL_USER_ID: IIFL User ID (Email/Mobile/Client ID/PAN)
     - IIFL_PASSWORD: IIFL Password
     - IIFL_TOTP_SECRET: TOTP Secret Key
     - TELEGRAM_BOT_TOKEN: Telegram Bot Token (optional)
     - TELEGRAM_CHAT_ID: Telegram Chat ID (optional)
-    
-    Args:
-        event: Lambda event
-        context: Lambda context
-        
-    Returns:
-        dict with statusCode and body
     """
     print("="*70)
-    print(" IIFL Token Generator - AWS Lambda")
+    print(" IIFL Token Generator - AWS Lambda (Selenium)")
     print(f" Invoked at: {get_current_timestamp()}")
     print("="*70)
     
-    # Check dependencies
-    if not HAS_PLAYWRIGHT:
-        return {
-            "statusCode": 500,
-            "body": "Missing dependency: playwright"
-        }
-    
     if not HAS_PYOTP:
-        return {
-            "statusCode": 500,
-            "body": "Missing dependency: pyotp"
-        }
+        return {"statusCode": 500, "body": "Missing dependency: pyotp"}
     
-    # Process token generation
-    result = process_iifl_token()
-    
-    return result
-
-
-# ============================================================
-# MAIN EXECUTION
-# ============================================================
-
-def main():
-    """Main entry point for script execution"""
-    print("\n" + "="*70)
-    print(" IIFL Token Generator - Tradetron Integration")
-    print(f" Mode: {'AWS Lambda' if IS_LAMBDA else 'Local'}")
-    print(f" Timestamp: {get_current_timestamp()}")
-    print("="*70 + "\n")
-    
-    # Check dependencies
-    if not HAS_PLAYWRIGHT:
-        print("❌ Missing dependency: playwright")
-        print("   Install with: pip install playwright && playwright install chromium")
-        return
-    
-    if not HAS_PYOTP:
-        print("❌ Missing dependency: pyotp")
-        print("   Install with: pip install pyotp")
-        return
-    
-    # Process token generation
-    result = process_iifl_token()
-    
-    # Print summary
-    print("\n" + "="*70)
-    print(" SUMMARY")
-    print("="*70)
-    
-    if result["statusCode"] == 200:
-        print(f"✅ Status: SUCCESS")
-        print(f"👤 User: {result.get('user_id', 'N/A')}")
-        print(f"📅 Last Updated: {result.get('last_updated', 'N/A')}")
-    else:
-        print(f"❌ Status: FAILED")
-        print(f"⚠️ Error: {result.get('body', 'Unknown error')}")
-    
-    print("="*70 + "\n")
-    
-    return result
+    return main()
 
 
 if __name__ == "__main__":
