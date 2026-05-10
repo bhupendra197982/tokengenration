@@ -159,6 +159,29 @@ def generate_totp(secret):
     return totp.now()
 
 
+def get_current_timestamp():
+    """Get current timestamp in readable format"""
+    from datetime import datetime
+    return datetime.now().strftime("%b %d, %H:%M")
+
+
+def extract_last_updated(page_source):
+    """Extract Last Updated timestamp from Tradetron page"""
+    # Look for patterns like "Last Updated: May 10, 08:45" or similar
+    patterns = [
+        r'Last\s*Updated[:\s]*([A-Za-z]+\s+\d{1,2},?\s*\d{1,2}:\d{2})',
+        r'last[_-]?updated["\s:]+([^"<]+)',
+        r'Updated[:\s]*([A-Za-z]+\s+\d{1,2},?\s*\d{1,2}:\d{2})',
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, page_source, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+    
+    return None
+
+
 # ============================================================
 # HTTP-BASED LOGIN (Lambda Compatible)
 # ============================================================
@@ -233,6 +256,8 @@ def login_flattrade_http(user_id, password, totp_secret):
                 print("      ✓ API Login successful!")
                 print(f"      Token received: {str(login_data.get('susertoken', 'N/A'))[:30]}...")
                 
+                current_time = get_current_timestamp()
+                
                 # Step 4: Complete Tradetron callback with token
                 print("[4/4] Completing Tradetron authentication...")
                 
@@ -242,13 +267,18 @@ def login_flattrade_http(user_id, password, totp_secret):
                     callback_resp = session.get(callback_url, headers=HEADERS, allow_redirects=True)
                     print(f"      Final URL: {callback_resp.url}")
                     
+                    # Try to extract Last Updated from callback response
+                    last_updated = extract_last_updated(callback_resp.text) or current_time
+                    
                     if "success" in callback_resp.url.lower() or callback_resp.status_code == 200:
                         print("\n✅ FlatTrade authentication SUCCESSFUL!")
-                        return True
+                        print(f"   📅 Last Updated: {last_updated}")
+                        return {"success": True, "last_updated": last_updated}
                 except:
                     # Even if callback fails, if we got token, consider it success
                     print("\n✅ FlatTrade token generated (callback redirect skipped)")
-                    return True
+                    print(f"   📅 Token generated at: {current_time}")
+                    return {"success": True, "last_updated": current_time}
             else:
                 print(f"      ❌ Login failed: {login_data.get('emsg', 'Unknown error')}")
                 
@@ -302,26 +332,31 @@ def login_flattrade_http(user_id, password, totp_secret):
         
         print(f"      Form response URL: {form_resp.url}")
         
+        current_time = get_current_timestamp()
+        last_updated = extract_last_updated(form_resp.text) or current_time
+        
         # Check for success
         if "success" in form_resp.url.lower() or "tradetron" in form_resp.url.lower():
             print("\n✅ FlatTrade authentication SUCCESSFUL (form login)!")
-            return True
+            print(f"   📅 Last Updated: {last_updated}")
+            return {"success": True, "last_updated": last_updated}
         elif form_resp.status_code == 200 and "dashboard" in form_resp.url.lower():
             print("\n✅ FlatTrade authentication SUCCESSFUL!")
-            return True
+            print(f"   📅 Last Updated: {last_updated}")
+            return {"success": True, "last_updated": last_updated}
         else:
             print(f"      ❌ Form login may have failed. URL: {form_resp.url}")
             
             # Check page content
             if "invalid" in form_resp.text.lower() or "error" in form_resp.text.lower():
                 print("      ❌ Invalid credentials or TOTP")
-                return False
+                return {"success": False, "last_updated": None, "error": "Invalid credentials or TOTP"}
 
-        return False
+        return {"success": False, "last_updated": None, "error": "Unknown login result"}
 
     except Exception as e:
         print(f"\n❌ Error during FlatTrade HTTP login: {type(e).__name__}: {e}")
-        return False
+        return {"success": False, "last_updated": None, "error": str(e)}
 
 
 # ============================================================
@@ -534,27 +569,41 @@ def login_flattrade_selenium(user_id, password, totp_secret):
         current_url = driver.current_url
         print(f"      Current URL after login: {current_url}")
         
+        # Get page source for timestamp extraction
+        page_source = driver.page_source
+        last_updated = extract_last_updated(page_source)
+        current_time = get_current_timestamp()
+        
         if "tradetron" in current_url.lower() or "success" in current_url.lower():
             print("\n✅ FlatTrade authentication SUCCESSFUL!")
-            return True
+            if last_updated:
+                print(f"   📅 Last Updated: {last_updated}")
+            else:
+                print(f"   📅 Token generated at: {current_time}")
+            return {"success": True, "last_updated": last_updated or current_time}
         elif "error" in current_url.lower() or "failed" in current_url.lower():
             print("\n❌ FlatTrade authentication FAILED!")
-            return False
+            return {"success": False, "last_updated": None}
         else:
-            page_source = driver.page_source.lower()
-            if "success" in page_source or "token" in page_source or "authorized" in page_source:
+            page_source_lower = page_source.lower()
+            if "success" in page_source_lower or "token" in page_source_lower or "authorized" in page_source_lower:
                 print("\n✅ FlatTrade authentication appears SUCCESSFUL!")
-                return True
-            elif "invalid" in page_source or "error" in page_source or "failed" in page_source:
+                if last_updated:
+                    print(f"   📅 Last Updated: {last_updated}")
+                else:
+                    print(f"   📅 Token generated at: {current_time}")
+                return {"success": True, "last_updated": last_updated or current_time}
+            elif "invalid" in page_source_lower or "error" in page_source_lower or "failed" in page_source_lower:
                 print("\n❌ FlatTrade authentication appears to have FAILED!")
-                return False
+                return {"success": False, "last_updated": None}
             else:
                 print("\n⚠️  Authentication status unclear - assuming success")
-                return True
+                print(f"   📅 Attempt time: {current_time}")
+                return {"success": True, "last_updated": current_time}
 
     except Exception as e:
         print(f"\n❌ Error during FlatTrade Selenium login: {type(e).__name__}: {e}")
-        return False
+        return {"success": False, "last_updated": None, "error": str(e)}
     
     finally:
         if driver:
@@ -606,12 +655,24 @@ def process_user(user):
 
     result = login_flattrade(user_id, password, totp_secret)
     
-    if result:
-        send_telegram_message(f"✅ FlatTrade Token Generated Successfully for {user_id}!")
-        return {"user_id": user_id, "status": 200, "message": "Success"}
+    # Handle both dict result (new format) and boolean result (fallback)
+    if isinstance(result, dict):
+        is_success = result.get("success", False)
+        last_updated = result.get("last_updated", "")
+        error_msg = result.get("error", "")
     else:
-        send_telegram_message(f"❌ FlatTrade Token Generation FAILED for {user_id}")
-        return {"user_id": user_id, "status": 500, "message": "Token generation failed"}
+        is_success = bool(result)
+        last_updated = get_current_timestamp() if is_success else ""
+        error_msg = ""
+    
+    if is_success:
+        timestamp_info = f"\n📅 Last Updated: {last_updated}" if last_updated else ""
+        send_telegram_message(f"✅ FlatTrade Token Generated Successfully for {user_id}!{timestamp_info}")
+        return {"user_id": user_id, "status": 200, "message": "Success", "last_updated": last_updated}
+    else:
+        error_info = f"\n⚠️ Error: {error_msg}" if error_msg else ""
+        send_telegram_message(f"❌ FlatTrade Token Generation FAILED for {user_id}{error_info}")
+        return {"user_id": user_id, "status": 500, "message": "Token generation failed", "error": error_msg}
 
 
 # ============================================================
@@ -653,13 +714,23 @@ def main():
 
     for result in results:
         status_icon = "✅" if result["status"] == 200 else "❌"
-        print(f"{status_icon} {result['user_id']}: {result['message']}")
+        timestamp_info = f" (Last Updated: {result.get('last_updated', 'N/A')})" if result["status"] == 200 else ""
+        print(f"{status_icon} {result['user_id']}: {result['message']}{timestamp_info}")
 
     print(f"\nTotal: {successful} successful, {failed} failed")
     print(f"{'='*70}\n")
 
-    # Send summary notification
-    summary_msg = f"🔄 FlatTrade Token Generation Summary:\n✅ Success: {successful}\n❌ Failed: {failed}"
+    # Send summary notification with timestamps
+    summary_lines = [f"🔄 FlatTrade Token Generation Summary:"]
+    for result in results:
+        if result["status"] == 200:
+            timestamp_info = result.get('last_updated', 'N/A')
+            summary_lines.append(f"✅ {result['user_id']}: {timestamp_info}")
+        else:
+            error_info = result.get('error', result.get('message', 'Failed'))
+            summary_lines.append(f"❌ {result['user_id']}: {error_info}")
+    
+    summary_msg = "\n".join(summary_lines)
     send_telegram_message(summary_msg)
 
     return {
