@@ -36,8 +36,34 @@ BROKER_ID = os.environ.get("TRADETRON_BROKER_ID", "917")
 import hashlib
 import json
 import base64
-from telegram_bot import send_telegram_message
 
+# ============================================================
+# TELEGRAM CONFIGURATION
+# ============================================================
+TELEGRAM_BOT_TOKEN = "8499389750:AAHexwQgpvy8UWBDNJkDRQsTcCkj6St-Mxc"
+TELEGRAM_CHAT_ID = "6847391264"
+
+def send_telegram_message(message):
+    """Send a message to Telegram chat"""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("Telegram config missing")
+        return
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message
+    }
+
+    try:
+        response = requests.post(url, json=payload, timeout=20)
+        print("Telegram Status:", response.status_code)
+        print("Telegram Response:", response.text)
+    except Exception as e:
+        print(f"Telegram Error: {e}")
+
+# ============================================================
 BASE_URL = "https://tradetron.tech"
 ALTCHA_CHALLENGE_URL = f"{BASE_URL}/altcha-challenge"
 LOGIN_PAGE_URL = f"{BASE_URL}/login"
