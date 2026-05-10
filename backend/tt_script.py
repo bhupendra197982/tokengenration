@@ -36,6 +36,7 @@ BROKER_ID = os.environ.get("TRADETRON_BROKER_ID", "917")
 import hashlib
 import json
 import base64
+from telegram_bot import send_telegram_message
 
 BASE_URL = "https://tradetron.tech"
 ALTCHA_CHALLENGE_URL = f"{BASE_URL}/altcha-challenge"
@@ -300,6 +301,9 @@ def main():
     print()
 
     session = requests.Session() 
+    
+    # Send start notification
+    send_telegram_message("🤖 Tradetron Token Regeneration Script Started")
 
     
     # Don't auto-redirect on the regenerate call so we can inspect it 
@@ -314,22 +318,28 @@ def main():
 
         if regenerate_token(session): 
             print("\n✓ Done! Token regeneration completed successfully.") 
+            send_telegram_message("✅ Token regeneration SUCCESSFUL!")
             sys.exit(0) 
         else: 
             print("\n✗ Token regeneration may have failed. Check Tradetron UI.") 
+            send_telegram_message("❌ Token regeneration FAILED. Check Tradetron UI.")
             sys.exit(1)
 
     except requests.exceptions.ConnectionError as e: 
         print(f"\n✗ Connection error: {e}") 
+        send_telegram_message(f"❌ Connection error: {e}")
         sys.exit(1) 
     except requests.exceptions.Timeout as e: 
         print(f"\n✗ Request timed out: {e}") 
+        send_telegram_message(f"❌ Request timed out: {e}")
         sys.exit(1) 
     except RuntimeError as e: 
         print(f"\n✗ Error: {e}") 
+        send_telegram_message(f"❌ Runtime error: {e}")
         sys.exit(1) 
     except Exception as e: 
         print(f"\n✗ Unexpected error: {type(e).__name__}: {e}") 
+        send_telegram_message(f"❌ Unexpected error: {type(e).__name__}: {e}")
         sys.exit(1)
 
 if __name__ == "__main__": 
