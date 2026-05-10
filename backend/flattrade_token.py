@@ -57,9 +57,9 @@ except ImportError:
 # Default single user configuration
 FLATTRADE_USERS = [
     {
-        "user_id": os.environ.get("FLATTRADE_USER_ID", "YOUR_USER_ID"),
-        "password": os.environ.get("FLATTRADE_PASSWORD", "YOUR_PASSWORD"),
-        "totp_secret": os.environ.get("FLATTRADE_TOTP_SECRET", "YOUR_TOTP_SECRET")
+        "user_id": os.environ.get("FLATTRADE_USER_ID", "FZ29374"),
+        "password": os.environ.get("FLATTRADE_PASSWORD", "@Bhupendra25"),
+        "totp_secret": os.environ.get("FLATTRADE_TOTP_SECRET", "5SF7Z2QZW6NUUTFHGX7QWGUUFR373NG5")
     }
 ]
 
@@ -155,8 +155,8 @@ def setup_selenium_driver():
         sys.exit(1)
 
     chrome_options = Options()
-    # Uncomment for headless mode (no browser window)
-    # chrome_options.add_argument("--headless")
+    # Headless mode (no browser window)
+    chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
@@ -300,29 +300,66 @@ def login_flattrade_via_tradetron(user_id, password, totp_secret):
 
         # Click Login button
         print("[5/5] Clicking Login button...")
+        login_clicked = False
+        
+        # Try multiple approaches to find and click the login button
         try:
+            # First try: Look for submit button or common login button classes
             login_button = wait.until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, 
-                    "button[type='submit'], button:contains('Log In'), "
-                    "button:contains('Login'), input[type='submit'], "
-                    ".login-btn, #loginBtn, button.btn-primary"
+                    "button[type='submit'], input[type='submit'], "
+                    ".login-btn, #loginBtn, button.btn-primary, "
+                    "button.btn, button.submit-btn"
                 ))
             )
             login_button.click()
+            login_clicked = True
             print("      ✓ Clicked Login button")
         except TimeoutException:
-            # Try alternative button locators
+            pass
+        
+        # Second try: Find button by text content
+        if not login_clicked:
             try:
                 buttons = driver.find_elements(By.TAG_NAME, "button")
                 for btn in buttons:
-                    btn_text = btn.text.lower()
-                    if "log in" in btn_text or "login" in btn_text or "submit" in btn_text:
+                    btn_text = btn.text.lower().strip()
+                    if btn_text in ["log in", "login", "submit", "sign in"]:
                         btn.click()
-                        print("      ✓ Clicked Login button (alternative locator)")
+                        login_clicked = True
+                        print("      ✓ Clicked Login button (by text)")
+                        break
+            except Exception:
+                pass
+        
+        # Third try: Find by XPath
+        if not login_clicked:
+            try:
+                login_button = driver.find_element(By.XPATH, 
+                    "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'log in') or "
+                    "contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'login')]")
+                login_button.click()
+                login_clicked = True
+                print("      ✓ Clicked Login button (by XPath)")
+            except Exception:
+                pass
+        
+        if not login_clicked:
+            # Last resort: Try clicking any visible button
+            try:
+                buttons = driver.find_elements(By.TAG_NAME, "button")
+                for btn in buttons:
+                    if btn.is_displayed() and btn.is_enabled():
+                        btn.click()
+                        login_clicked = True
+                        print("      ✓ Clicked first available button")
                         break
             except Exception as e:
                 print(f"      ❌ Could not find Login button: {e}")
-                return False
+        
+        if not login_clicked:
+            print("      ❌ Could not find any Login button")
+            return False
 
         # Wait for redirect/success
         print("\n⏳ Waiting for authentication to complete...")
