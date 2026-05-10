@@ -26,7 +26,14 @@ import hashlib
 import json
 import base64
 import sys
-import getpass
+
+# Optional import - only for interactive use
+try:
+    import getpass
+    HAS_GETPASS = True
+except (ImportError, OSError):
+    # In Lambda or environments without TTY, getpass may not be available
+    HAS_GETPASS = False
 
 # ============================================================
 # CONFIGURATION
@@ -405,11 +412,28 @@ def main():
     """Main function to execute token regeneration for all users"""
     global EMAIL, PASSWORD, BROKER_ID
 
-    # Validate credentials - prompt interactively if not set
+    # Validate credentials - prompt interactively if not set (standalone mode only)
     if EMAIL == "YOUR_EMAIL_HERE":
-        EMAIL = input("Enter your Tradetron email: ").strip()
+        if HAS_GETPASS:
+            EMAIL = input("Enter your Tradetron email: ").strip()
+        else:
+            # In Lambda or non-interactive environment, credentials must be via env vars
+            print("ERROR: TRADETRON_EMAIL environment variable not set")
+            return {
+                "statusCode": 400,
+                "body": "Missing TRADETRON_EMAIL"
+            }
+    
     if PASSWORD == "YOUR_PASSWORD_HERE":
-        PASSWORD = getpass.getpass("Enter your Tradetron password: ")
+        if HAS_GETPASS:
+            PASSWORD = getpass.getpass("Enter your Tradetron password: ")
+        else:
+            # In Lambda or non-interactive environment, credentials must be via env vars
+            print("ERROR: TRADETRON_PASSWORD environment variable not set")
+            return {
+                "statusCode": 400,
+                "body": "Missing TRADETRON_PASSWORD"
+            }
 
     if not EMAIL or not PASSWORD:
         print("ERROR: Email and password are required.")
